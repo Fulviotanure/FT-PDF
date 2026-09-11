@@ -53,6 +53,28 @@ namespace FtPdf.Services
 
     public class PdfExtractionService
     {
+        private static readonly HashSet<string> CommonRecognizedWords = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Brazilian Banking & Financial Terms
+            "banco", "comprovante", "pagamento", "pagamentos", "extrato", "saldo", "fatura", "cartao", "cartão",
+            "cliente", "agencia", "agência", "conta", "valor", "data", "total", "segunda", "via", "atendimento",
+            "descricao", "descrição", "referencia", "referência", "documento", "transferencia", "transferência",
+            "beneficiario", "beneficiário", "pagador", "autenticacao", "autenticação", "real", "reais", "emissao",
+            "emissão", "vencimento", "codigo", "código", "barras", "linha", "digitavel", "digitável", "debito",
+            "débito", "credito", "crédito", "dinheiro", "cheque", "deposito", "depósito", "pix", "ted", "doc",
+            "titulos", "títulos", "movimentacao", "movimentação", "posicao", "posição", "carteira", "folha",
+            "financeiro", "empresa", "cnpj", "cpf", "sacado", "cedente", "operacao", "operação", "recibo",
+            "juros", "multa", "desconto", "abatimento",
+            // Portuguese Stop Words & Common Terms
+            "de", "da", "do", "das", "dos", "para", "com", "em", "por", "um", "uma", "uns", "umas",
+            "no", "na", "nos", "nas", "ao", "aos", "ou", "se", "que", "este", "esta", "seu", "sua",
+            "pelo", "pela", "pelos", "pelas", "sobre", "entre", "mais", "como", "nao", "não",
+            "mes", "mês", "ano", "dia", "hora", "numero", "número", "nome", "periodo", "período",
+            // Common English Document Words
+            "bank", "payment", "statement", "invoice", "receipt", "account", "date", "amount", "total",
+            "credit", "debit", "balance", "customer", "client", "number", "the", "and", "for", "with", "from"
+        };
+
         public ExtractionResult ExtractAndAnalyze(string filePath)
         {
             var result = new ExtractionResult();
@@ -85,6 +107,7 @@ namespace FtPdf.Services
             int strangeChars = 0;
             int totalWords = 0;
             int validWordCount = 0;
+            int recognizedWordHits = 0;
             int scannedPages = 0;
             int totalImages = 0;
             int brokenLineCount = 0;
@@ -178,6 +201,12 @@ namespace FtPdf.Services
 
                     foreach (var word in words)
                     {
+                        string cleanWord = Regex.Replace(word.Text, @"[^\w]", "");
+                        if (cleanWord.Length >= 2 && CommonRecognizedWords.Contains(cleanWord))
+                        {
+                            recognizedWordHits++;
+                        }
+
                         if (IsValidLinguisticWord(word.Text))
                         {
                             validWordCount++;
@@ -226,13 +255,17 @@ namespace FtPdf.Services
                 }
 
                 // 2. Check Scrambled / Obfuscated / Missing Font Encoding
-                // High density of symbols, or very low alpha letters while having many non-digit characters, or almost zero valid vowel words
+                // Genuine scramble or missing ToUnicode occurs when:
+                // - High density of truly corrupt/unmapped characters exist (strangeChars like U+FFFD or control codes), OR
+                // - The document has plenty of text, but lacks coherent linguistic words, has ZERO recognized dictionary words, and displays gibberish / extreme symbol noise.
                 if (!isScannedDocument && totalLetters > 40)
                 {
-                    // If more than 30% of characters are non-alphanumeric punctuation/symbols,
-                    // or if valid words with vowels are less than 20% of total tokens,
-                    // or if there are tons of characters but very few coherent words (e.g. 2000 chars and word ratio is gibberish)
-                    if (symbolRatio > 0.28 || (alphaRatio < 0.35 && digitCount < (totalLetters * 0.40)) || (validWordRatio < 0.25 && totalWords > 15))
+                    double strangeRatio = (double)strangeChars / totalLetters;
+                    bool hasSevereStrangeChars = strangeRatio > 0.15 && strangeChars > 15;
+                    bool isGibberishWithoutRecognizedWords = recognizedWordHits == 0 && totalWords > 15 && validWordRatio < 0.15;
+                    bool isExtremelyCorruptSymbols = recognizedWordHits == 0 && symbolRatio > 0.60 && alphaRatio < 0.10;
+
+                    if (hasSevereStrangeChars || isGibberishWithoutRecognizedWords || isExtremelyCorruptSymbols)
                     {
                         isScrambledOrEncrypted = true;
                     }
@@ -258,7 +291,14 @@ namespace FtPdf.Services
                     report.ImportVerdict = "Arquivo não importável";
                     report.ImportVerdictColor = "#EF4444"; // Red
                     report.DiagnosticWarnings.Add("Fontes com codificação embutida sem mapeamento ToUnicode (letras/sinais embaralhados e não decodificáveis).");
-                    report.DiagnosticWarnings.Add($"Detectada alta densidade de símbolos anômalos ({symbolRatio:P1}) e palavras sem coerência linguística.");
+                    if (strangeChars > 0)
+                    {
+                        report.DiagnosticWarnings.Add($"Detectada alta densidade de caracteres anômalos ou ilegíveis ({strangeChars} ocorrência(s)).");
+                    }
+                    else
+                    {
+                        report.DiagnosticWarnings.Add("Texto extraído sem coerência linguística ou palavras decodificáveis.");
+                    }
                 }
                 else if (totalLetters == 0)
                 {
@@ -445,20 +485,38 @@ namespace FtPdf.Services
 
         private static bool IsValidLinguisticWord(string text)
         {
-            if (string.IsNullOrWhiteSpace(text) || text.Length < 2) return false;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            text = text.Trim();
 
-            // Pure digits (numbers like 12.848,05 or 26/06/2026) are valid tokens
+            // Single vowels (a, e, o, à) are valid words in Portuguese
+            if (text.Length == 1)
+            {
+                return "aeiouyáéíóúàâêô".Contains(char.ToLower(text[0]));
+            }
+
+            // Pure digits or dates/currency tokens (e.g. 12.848,05 or 26/06/2026 or 14:22:04)
             if (Regex.IsMatch(text, @"^[\d\.,\/\-\:]+$")) return true;
 
             // Check for at least one vowel in alphabetic words
             bool hasVowel = Regex.IsMatch(text, @"[aeiouyáéíóúâêîôûãõàäëïöü]", RegexOptions.IgnoreCase);
             bool hasLetters = text.Any(char.IsLetter);
 
-            // If it has letters, it should normally have a vowel and not be dominated by symbols like ###, """", $$
             if (hasLetters && hasVowel)
             {
                 int symbolCount = text.Count(c => !char.IsLetterOrDigit(c));
                 return symbolCount <= (text.Length / 2);
+            }
+
+            // Common Brazilian business/financial acronyms (without vowels or state codes)
+            if (Regex.IsMatch(text, @"^(CPF|CNPJ|TED|DOC|STR|CIP|DDA|PIX|BB|BRL|S\/A|S\.A\.|LTDA|EIRELI|ME|EPP|[A-Z]{2})$", RegexOptions.IgnoreCase))
+            {
+                return true;
+            }
+
+            // Account / agency codes with check digit (e.g. 2290-X, 74.784-X)
+            if (Regex.IsMatch(text, @"^\d+[\.\-][\dX]$", RegexOptions.IgnoreCase))
+            {
+                return true;
             }
 
             return false;

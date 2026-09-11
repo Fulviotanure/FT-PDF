@@ -1,7 +1,7 @@
 @echo off
 title FT PDF - Teste dos Arquivos Brutos (.NET 10)
 set "PATH=C:\Users\Fulvio\AppData\Local\Microsoft\dotnet;%PATH%"
-cd /d "c:\Users\Fulvio\Documentos\antigravity\FT PDF\ft-pdf-1\ft-pdf"
+cd /d "C:\Users\fulvi\Desktop\ft-pdf\ft-pdf"
 echo ================================================================
 echo       FT PDF (Edicao Completa) - Teste Local dos Arquivos Brutos
 echo ================================================================

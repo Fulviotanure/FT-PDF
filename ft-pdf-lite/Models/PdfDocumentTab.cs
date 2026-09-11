@@ -11,9 +11,11 @@ namespace FtPdfLite.Models
         public string FileName => Path.GetFileName(FilePath);
         public int TotalPages { get; set; } = 1;
         public ExtractionResult? Extraction { get; set; }
+        public System.Collections.Generic.Dictionary<int, System.Windows.Media.Imaging.BitmapSource> Thumbnails { get; } = new();
 
         public void Dispose()
         {
+            Thumbnails.Clear();
         }
     }
 }
