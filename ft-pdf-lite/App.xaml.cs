@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Windows;
+using Application = System.Windows.Application;
 using FtPdfLite.Services;
 
 namespace FtPdfLite

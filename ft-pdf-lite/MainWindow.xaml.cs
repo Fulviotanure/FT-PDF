@@ -9,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using FtPdfLite.Models;
 using FtPdfLite.Services;
+using PdfiumViewer;
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
 using Brushes = System.Windows.Media.Brushes;
@@ -36,6 +37,17 @@ using BitmapScalingMode = System.Windows.Media.BitmapScalingMode;
 using DataObject = System.Windows.DataObject;
 using DataFormats = System.Windows.DataFormats;
 using DragDropEffects = System.Windows.DragDropEffects;
+using DragEventArgs = System.Windows.DragEventArgs;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using MouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using Point = System.Windows.Point;
+using Vector = System.Windows.Vector;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using VerticalAlignment = System.Windows.VerticalAlignment;
+using WindowChrome = System.Windows.Shell.WindowChrome;
+using ControlTemplate = System.Windows.Controls.ControlTemplate;
+using ContentPresenter = System.Windows.Controls.ContentPresenter;
 
 namespace FtPdfLite
 {
@@ -44,6 +56,7 @@ namespace FtPdfLite
         public PdfDocumentTab Tab { get; set; } = null!;
         public string FilePath { get; set; } = string.Empty;
         public MainWindow? SourceWindow { get; set; }
+        public bool HandledByTargetWindow { get; set; } = false;
     }
 
     public partial class MainWindow : Window
@@ -53,25 +66,43 @@ namespace FtPdfLite
         private readonly PdfExtractionService _extractionService = new();
         private bool _isRawTextMode = false;
         private bool _isNotepadOpen = false;
-        private bool _isWebViewInitialized = false;
         private bool _isPageSidebarOpen = false;
         private PdfDocumentTab? _splitTab = null;
-        private bool _isSplitWebViewInitialized = false;
         private readonly Dictionary<int, Image> _pageImageMap = new();
         private readonly Dictionary<int, Border> _pageCardMap = new();
         private int _activePageNum = 1;
         private CancellationTokenSource? _thumbnailCts;
-        private CancellationTokenSource? _jumpCts;
+        private PdfRenderer? _pdfRenderer;
+        private PdfRenderer? _splitPdfRenderer;
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll", PreserveSig = true)]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_ROUND = 2;
 
         public MainWindow()
         {
             InitializeComponent();
             StateChanged += MainWindow_StateChanged;
+            SizeChanged += (s, e) => UpdateTabsBar();
             PreviewKeyDown += MainWindow_PreviewKeyDown;
-            InitializeViewerAsync();
+            InitializePdfRenderer();
             CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: true, this);
             Loaded += (s, e) => CheckDefaultAppBanner();
+        }
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            try
+            {
+                var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                int preference = DWMWCP_ROUND;
+                DwmSetWindowAttribute(helper.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int));
+            }
+            catch { }
         }
 
         private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -155,7 +186,24 @@ namespace FtPdfLite
                 BtnMaximize.Content = WindowState == WindowState.Maximized ? "🗗" : "🗖";
                 BtnMaximize.ToolTip = WindowState == WindowState.Maximized ? "Restaurar" : "Maximizar";
             }
+            UpdateWindowCorners();
         }
+
+        private void UpdateWindowCorners()
+        {
+            bool isMaximized = (WindowState == WindowState.Maximized);
+            if (WindowRootBorder != null)
+            {
+                WindowRootBorder.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(10);
+                WindowRootBorder.BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+            }
+            if (TitleBarBorder != null)
+            {
+                TitleBarBorder.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(9, 9, 0, 0);
+            }
+        }
+
+
 
         #region Custom Integrated Window Controls (Min, Max, Close)
 
@@ -221,46 +269,156 @@ namespace FtPdfLite
 
         #endregion
 
-        private async void InitializeViewerAsync()
+        #region Native Pdfium Viewer (WindowsFormsHost)
+
+        private void InitializePdfRenderer()
+        {
+            if (_pdfRenderer != null) return;
+
+            _pdfRenderer = new PdfRenderer
+            {
+                Dock = System.Windows.Forms.DockStyle.Fill,
+                BackColor = System.Drawing.Color.FromArgb(19, 24, 43),
+                CursorMode = PdfViewerCursorMode.TextSelection,
+                ZoomMode = PdfViewerZoomMode.FitWidth
+            };
+
+            _pdfRenderer.DisplayRectangleChanged += (s, e) =>
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (_activeTab == null || _pdfRenderer == null) return;
+                    int currentPage = _pdfRenderer.Page + 1;
+                    if (currentPage != _activePageNum)
+                    {
+                        _activePageNum = currentPage;
+                        TxtViewerPageInfo.Text = $"Página {currentPage} de {_activeTab.TotalPages}";
+                        UpdatePageCardsHighlight();
+                    }
+                });
+            };
+
+            _pdfRenderer.ZoomChanged += (s, e) =>
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    if (_pdfRenderer != null)
+                        UpdateZoomLabel(_pdfRenderer.Zoom);
+                });
+            };
+
+            // Menu de contexto com clique direito para copiar texto ou selecionar tudo
+            var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+            var copyItem = new System.Windows.Forms.ToolStripMenuItem("Copiar texto", null, (s, e) => _pdfRenderer.CopySelection());
+            var selectAllItem = new System.Windows.Forms.ToolStripMenuItem("Selecionar tudo", null, (s, e) => _pdfRenderer.SelectAll());
+            contextMenu.Items.Add(copyItem);
+            contextMenu.Items.Add(selectAllItem);
+            contextMenu.Opening += (s, e) =>
+            {
+                copyItem.Enabled = _pdfRenderer.IsTextSelected;
+            };
+            _pdfRenderer.ContextMenuStrip = contextMenu;
+
+            PdfHost.Child = _pdfRenderer;
+        }
+
+        private void EnsureSplitRendererInitialized()
+        {
+            if (_splitPdfRenderer != null) return;
+
+            _splitPdfRenderer = new PdfRenderer
+            {
+                Dock = System.Windows.Forms.DockStyle.Fill,
+                BackColor = System.Drawing.Color.FromArgb(19, 24, 43),
+                CursorMode = PdfViewerCursorMode.TextSelection,
+                ZoomMode = PdfViewerZoomMode.FitWidth
+            };
+
+            var splitContextMenu = new System.Windows.Forms.ContextMenuStrip();
+            var splitCopyItem = new System.Windows.Forms.ToolStripMenuItem("Copiar texto", null, (s, e) => _splitPdfRenderer.CopySelection());
+            var splitSelectAllItem = new System.Windows.Forms.ToolStripMenuItem("Selecionar tudo", null, (s, e) => _splitPdfRenderer.SelectAll());
+            splitContextMenu.Items.Add(splitCopyItem);
+            splitContextMenu.Items.Add(splitSelectAllItem);
+            splitContextMenu.Opening += (s, e) =>
+            {
+                splitCopyItem.Enabled = _splitPdfRenderer.IsTextSelected;
+            };
+            _splitPdfRenderer.ContextMenuStrip = splitContextMenu;
+
+            SplitPdfHost.Child = _splitPdfRenderer;
+        }
+
+        /// <summary>
+        /// Carrega o documento PDF diretamente no renderer vetorial nativo do Pdfium.
+        /// </summary>
+        private async Task LoadAndRenderTab(PdfDocumentTab tab, bool isSplit = false)
         {
             try
             {
-                PdfWebViewer.DefaultBackgroundColor = System.Drawing.Color.FromArgb(15, 23, 42);
-
-                var userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FtPdfLite", "WebView2");
-                Directory.CreateDirectory(userDataFolder);
-                var env = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(null, userDataFolder);
-                await PdfWebViewer.EnsureCoreWebView2Async(env);
-                _isWebViewInitialized = true;
-                PdfWebViewer.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.IsZoomControlEnabled = false;
-
-                _ = EnsureSplitViewerInitializedAsync();
-
-                if (_activeTab != null && File.Exists(_activeTab.FilePath))
+                if (tab.PdfDoc == null)
                 {
-                    NavigateToPdf(_activeTab.FilePath);
+                    tab.PdfDoc = await Task.Run(() => PdfDocument.Load(tab.FilePath));
+                    if (tab.PdfDoc == null) return;
+                    tab.TotalPages = tab.PdfDoc.PageCount;
+                }
+
+                if (isSplit)
+                {
+                    EnsureSplitRendererInitialized();
+                    _splitPdfRenderer?.Load(tab.PdfDoc);
+                    if (tab.CurrentPage > 0 && _splitPdfRenderer != null)
+                    {
+                        int zeroPage = Math.Clamp(tab.CurrentPage - 1, 0, tab.TotalPages - 1);
+                        _splitPdfRenderer.Page = zeroPage;
+                    }
+                }
+                else
+                {
+                    InitializePdfRenderer();
+                    if (_pdfRenderer != null)
+                    {
+                        _pdfRenderer.Load(tab.PdfDoc);
+                        if (tab.CurrentPage > 0)
+                        {
+                            int zeroPage = Math.Clamp(tab.CurrentPage - 1, 0, tab.TotalPages - 1);
+                            _pdfRenderer.Page = zeroPage;
+                        }
+                        _activePageNum = _pdfRenderer.Page + 1;
+                        TxtViewerPageInfo.Text = $"Página {_activePageNum} de {tab.TotalPages}";
+                        UpdateZoomLabel(_pdfRenderer.Zoom);
+                    }
                 }
             }
-            catch
-            {
-            }
+            catch { }
         }
 
-        private void NavigateToPdf(string filePath)
+        private void UpdateZoomLabel(double zoom)
         {
-            string cleanUrl = $"{new Uri(filePath).AbsoluteUri}#toolbar=0&navpanes=0";
-            if (_isWebViewInitialized && PdfWebViewer.CoreWebView2 != null)
-            {
-                PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-            }
-            else
-            {
-                PdfWebViewer.Source = new Uri(cleanUrl);
-            }
+            TxtZoomLevel.Text = $"{(int)Math.Round(zoom * 100)}%";
         }
+
+        private void BtnZoomIn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_pdfRenderer == null) return;
+            _pdfRenderer.Zoom = Math.Min(4.0, _pdfRenderer.Zoom * 1.25);
+            UpdateZoomLabel(_pdfRenderer.Zoom);
+        }
+
+        private void BtnZoomOut_Click(object sender, RoutedEventArgs e)
+        {
+            if (_pdfRenderer == null) return;
+            _pdfRenderer.Zoom = Math.Max(0.25, _pdfRenderer.Zoom / 1.25);
+            UpdateZoomLabel(_pdfRenderer.Zoom);
+        }
+
+        private void BtnZoomFit_Click(object sender, RoutedEventArgs e)
+        {
+            if (_pdfRenderer == null) return;
+            _pdfRenderer.ZoomMode = PdfViewerZoomMode.FitWidth;
+            UpdateZoomLabel(_pdfRenderer.Zoom);
+        }
+
+        #endregion
 
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
@@ -309,16 +467,14 @@ namespace FtPdfLite
                     return;
                 }
 
-                // Check overflow: if tabs are already at capacity (at minimum width limit ~48px)
-                double availableWidth = ScrollTabs?.ActualWidth ?? 0;
-                if (availableWidth <= 0) availableWidth = 800;
-                double btnWidth = BtnNewTab?.ActualWidth > 0 ? BtnNewTab.ActualWidth : 95;
-                double usableWidth = Math.Max(100, availableWidth - btnWidth - 30);
-                int maxPossibleTabs = Math.Max(1, (int)(usableWidth / 52.0));
+                // Check overflow: if tabs are already at capacity (at minimum width limit ~60px)
+                double totalWidth = TitleBarBorder?.ActualWidth > 0 ? TitleBarBorder.ActualWidth : (ActualWidth > 0 ? ActualWidth : 1200);
+                double usableWidth = Math.Max(200, totalWidth - 400);
+                int maxPossibleTabs = Math.Max(1, (int)(usableWidth / 60.0));
 
                 if (_tabs.Count >= maxPossibleTabs && _tabs.Count > 0)
                 {
-                    // Open in a new window to prevent tab bar overflow beyond 1 character!
+                    // Open in a new window to prevent tab bar overflow beyond limits!
                     var newWin = new MainWindow();
                     newWin.Show();
                     newWin.OpenTab(filePath);
@@ -357,8 +513,14 @@ namespace FtPdfLite
 
         private void SetActiveTab(PdfDocumentTab tab)
         {
+            if (_activeTab != null && _pdfRenderer != null)
+            {
+                _activeTab.CurrentPage = _pdfRenderer.Page + 1;
+                _activeTab.ZoomLevel = _pdfRenderer.Zoom;
+            }
+
             _activeTab = tab;
-            _activePageNum = 1;
+            _activePageNum = tab.CurrentPage;
             Title = $"{tab.FileName} - FT PDF Lite";
             UpdateTabsBar();
 
@@ -369,7 +531,8 @@ namespace FtPdfLite
             BtnToggleNotepad.Visibility = Visibility.Visible;
             BtnTogglePages.Visibility = Visibility.Visible;
 
-            NavigateToPdf(tab.FilePath);
+            // Load and render via native Pdfium (WindowsFormsHost)
+            _ = LoadAndRenderTab(tab, isSplit: false);
             UpdateNotepadView();
             UpdatePageCards();
             StartThumbnailGeneration(tab);
@@ -408,6 +571,12 @@ namespace FtPdfLite
             Title = "FT PDF Lite - Leitor e Validador";
             PanelEmptyState.Visibility = Visibility.Visible;
             PanelActiveContent.Visibility = Visibility.Collapsed;
+            PdfHost.Child = null;
+            _pdfRenderer?.Dispose();
+            _pdfRenderer = null;
+            SplitPdfHost.Child = null;
+            _splitPdfRenderer?.Dispose();
+            _splitPdfRenderer = null;
             BtnQuickSave.Visibility = Visibility.Collapsed;
             BtnQuickCopy.Visibility = Visibility.Collapsed;
             BtnToggleNotepad.Visibility = Visibility.Collapsed;
@@ -422,14 +591,18 @@ namespace FtPdfLite
         {
             PanelTabs.Children.Clear();
 
-            double availableWidth = ScrollTabs?.ActualWidth ?? 0;
-            if (availableWidth <= 0) availableWidth = 800;
-            double btnWidth = BtnNewTab?.ActualWidth > 0 ? BtnNewTab.ActualWidth : 95;
-            double usableWidth = Math.Max(100, availableWidth - btnWidth - 30);
+            double totalWidth = TitleBarBorder?.ActualWidth > 0 ? TitleBarBorder.ActualWidth : (ActualWidth > 0 ? ActualWidth : 1200);
+            double logoWidth = 140;
+            double controlsWidth = 145;
+            double newTabBtnsWidth = 45; // Apenas botão (+)
+            double spacerMinWidth = 90; // Garante espaço confortável para clicar e arrastar a janela
+            double usableWidth = Math.Max(120, totalWidth - logoWidth - controlsWidth - newTabBtnsWidth - spacerMinWidth);
             int count = _tabs.Count;
-            double widthForTabs = Math.Max(48 * count, usableWidth - (count * 4));
-            double targetWidth = count > 0 ? (widthForTabs / count) : 300;
-            double tabWidth = Math.Clamp(targetWidth, 48, 300);
+
+            double maxTabWidth = 240;
+            double minTabWidth = 60;
+            double targetWidth = count > 0 ? (usableWidth / count) : maxTabWidth;
+            double tabWidth = Math.Clamp(targetWidth, minTabWidth, maxTabWidth);
 
             foreach (var tab in _tabs)
             {
@@ -438,57 +611,110 @@ namespace FtPdfLite
                 var tabBorder = new Border
                 {
                     Background = new SolidColorBrush(isActive 
-                        ? (Color)ColorConverter.ConvertFromString("#1E293B") 
+                        ? (Color)ColorConverter.ConvertFromString("#182234") 
                         : Colors.Transparent),
                     BorderBrush = new SolidColorBrush(isActive 
                         ? (Color)ColorConverter.ConvertFromString("#334155") 
                         : Colors.Transparent),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(5),
+                    BorderThickness = new Thickness(1, 1, 1, 0),
+                    CornerRadius = new CornerRadius(7, 7, 0, 0),
                     Width = tabWidth,
-                    Height = 28,
-                    Padding = new Thickness(Math.Min(10, Math.Max(4, tabWidth * 0.05)), 2, Math.Min(8, Math.Max(4, tabWidth * 0.04)), 2),
-                    Margin = new Thickness(0, 0, 4, 0),
+                    Height = 35,
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    Padding = new Thickness(Math.Min(12, Math.Max(6, tabWidth * 0.06)), 0, Math.Min(8, Math.Max(4, tabWidth * 0.04)), 0),
+                    Margin = new Thickness(0, 0, 3, 0),
                     Cursor = Cursors.Hand,
                     ToolTip = $"{tab.FileName}\n(Arraste para fora para dividir a tela lado a lado)"
                 };
+                WindowChrome.SetIsHitTestVisibleInChrome(tabBorder, true);
+
+                if (!isActive)
+                {
+                    tabBorder.MouseEnter += (s, e) =>
+                    {
+                        tabBorder.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#162032"));
+                        tabBorder.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2D3748"));
+                    };
+                    tabBorder.MouseLeave += (s, e) =>
+                    {
+                        tabBorder.Background = Brushes.Transparent;
+                        tabBorder.BorderBrush = Brushes.Transparent;
+                    };
+                }
 
                 var dp = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
 
-                var icon = new TextBlock
+                FrameworkElement iconElement;
+                try
                 {
-                    Text = "📄",
-                    FontSize = 11,
-                    Margin = new Thickness(0, 0, tabWidth > 70 ? 6 : 2, 0),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                DockPanel.SetDock(icon, Dock.Left);
+                    var img = new Image
+                    {
+                        Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/logo.png")),
+                        Width = 15,
+                        Height = 15,
+                        Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+                    iconElement = img;
+                }
+                catch
+                {
+                    iconElement = new TextBlock
+                    {
+                        Text = "📄",
+                        FontSize = 11,
+                        Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                }
+                DockPanel.SetDock(iconElement, Dock.Left);
 
                 var closeBtn = new Button
                 {
                     Content = "✕",
                     FontSize = 9.5,
-                    Width = 16,
-                    Height = 16,
-                    Margin = new Thickness(tabWidth > 70 ? 6 : 1, 0, 0, 0),
+                    FontWeight = FontWeights.Bold,
+                    Width = 20,
+                    Height = 20,
+                    Margin = new Thickness(tabWidth > 80 ? 6 : 2, 0, 0, 0),
                     Background = Brushes.Transparent,
-                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#64748B")),
+                    Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8")),
                     BorderThickness = new Thickness(0),
                     Cursor = Cursors.Hand,
-                    ToolTip = "Fechar aba"
+                    ToolTip = "Fechar aba (Ctrl+W)"
                 };
                 closeBtn.Click += (s, e) =>
                 {
                     e.Handled = true;
                     CloseTab(tab);
                 };
+
+                var closeStyle = new Style(typeof(Button));
+                var closeTemplate = new ControlTemplate(typeof(Button));
+                var bdFactory = new FrameworkElementFactory(typeof(Border), "bd");
+                bdFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+                bdFactory.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+                var cpFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+                cpFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+                cpFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+                bdFactory.AppendChild(cpFactory);
+                closeTemplate.VisualTree = bdFactory;
+
+                var trigger = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
+                trigger.Setters.Add(new Setter { TargetName = "bd", Property = Border.BackgroundProperty, Value = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#334155")) });
+                trigger.Setters.Add(new Setter { Property = Button.ForegroundProperty, Value = Brushes.White });
+                closeTemplate.Triggers.Add(trigger);
+                closeStyle.Setters.Add(new Setter(Button.TemplateProperty, closeTemplate));
+                closeBtn.Style = closeStyle;
+
                 DockPanel.SetDock(closeBtn, Dock.Right);
 
-                double maxTitleWidth = Math.Max(8, tabWidth - 44);
+                double maxTitleWidth = Math.Max(12, tabWidth - (tabWidth > 80 ? 54 : 32));
                 var title = new TextBlock
                 {
                     Text = tab.FileName,
-                    FontSize = 11.5,
+                    FontSize = 12,
                     FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal,
                     Foreground = new SolidColorBrush(isActive ? Colors.White : (Color)ColorConverter.ConvertFromString("#94A3B8")),
                     MaxWidth = maxTitleWidth,
@@ -496,7 +722,7 @@ namespace FtPdfLite
                     VerticalAlignment = VerticalAlignment.Center
                 };
 
-                dp.Children.Add(icon);
+                dp.Children.Add(iconElement);
                 dp.Children.Add(closeBtn);
                 dp.Children.Add(title);
                 tabBorder.Child = dp;
@@ -528,17 +754,12 @@ namespace FtPdfLite
                             isMouseDown = false;
                             try
                             {
-                                if (_tabs.Count > 1 && _splitTab == null)
-                                {
-                                    OverlaySplitDropZone.Visibility = Visibility.Visible;
-                                    PdfWebViewer.Visibility = Visibility.Hidden;
-                                }
-
                                 var dragData = new TabDragData
                                 {
                                     Tab = tab,
                                     FilePath = tab.FilePath,
-                                    SourceWindow = this
+                                    SourceWindow = this,
+                                    HandledByTargetWindow = false
                                 };
 
                                 var dataObj = new DataObject();
@@ -547,14 +768,47 @@ namespace FtPdfLite
                                 dataObj.SetData(DataFormats.Text, tab.FilePath);
 
                                 DragDrop.DoDragDrop(tabBorder, dataObj, DragDropEffects.Move);
+
+                                // Se não foi solto na barra de outra janela FT PDF Lite
+                                if (!dragData.HandledByTargetWindow)
+                                {
+                                    var curPos = System.Windows.Forms.Cursor.Position;
+                                    Point windowPoint = PointFromScreen(new Point(curPos.X, curPos.Y));
+                                    bool isInsideTitleBar = (windowPoint.X >= 0 && windowPoint.X <= ActualWidth &&
+                                                             windowPoint.Y >= 0 && windowPoint.Y <= (TitleBarBorder?.ActualHeight ?? 44));
+
+                                    // Se soltou fora da barra de abas, cria uma nova janela destacada!
+                                    if (!isInsideTitleBar)
+                                    {
+                                        string path = tab.FilePath;
+                                        if (_tabs.Count == 1)
+                                        {
+                                            // Se for a única aba da janela atual, reposiciona a janela para onde foi solto
+                                            WindowState = WindowState.Normal;
+                                            Left = Math.Max(0, curPos.X - 200);
+                                            Top = Math.Max(0, curPos.Y - 20);
+                                            Activate();
+                                        }
+                                        else
+                                        {
+                                            // Havendo mais abas, destaca a aba em uma nova janela independente
+                                            var newWin = new MainWindow
+                                            {
+                                                WindowStartupLocation = WindowStartupLocation.Manual,
+                                                Left = Math.Max(0, curPos.X - 200),
+                                                Top = Math.Max(0, curPos.Y - 20)
+                                            };
+                                            newWin.Show();
+                                            newWin.OpenTab(path);
+                                            newWin.Activate();
+
+                                            // Remove a aba da janela de origem
+                                            DetachTabAndCloseIfEmpty(tab);
+                                        }
+                                    }
+                                }
                             }
                             catch { }
-                            finally
-                            {
-                                OverlaySplitDropZone.Visibility = Visibility.Collapsed;
-                                PdfWebViewer.Visibility = Visibility.Visible;
-                                if (_splitTab != null) SplitPdfWebViewer.Visibility = Visibility.Visible;
-                            }
                         }
                     }
                 };
@@ -607,29 +861,32 @@ namespace FtPdfLite
                 var data = e.Data.GetData(typeof(TabDragData)) as TabDragData;
                 if (data != null)
                 {
-                    if (data.Tab != null && _splitTab == data.Tab)
+                    data.HandledByTargetWindow = true;
+
+                    if (data.SourceWindow == this)
                     {
-                        // Unir tela dividida de volta como aba
-                        ExitSplitScreen(mergeBack: true);
                         e.Handled = true;
                         return;
                     }
 
-                    if (data.SourceWindow != null && data.SourceWindow != this && !string.IsNullOrEmpty(data.FilePath))
+                    // Solto vindo de OUTRA janela para a barra desta janela!
+                    string filePath = data.FilePath;
+                    var srcWin = data.SourceWindow;
+
+                    // 1. Remove da janela de origem (fecha a janela de origem se ela não tiver mais abas)
+                    if (srcWin != null && data.Tab != null)
                     {
-                        // Integrar aba vinda de outra janela para esta janela
-                        data.SourceWindow.RemoveTabByPath(data.FilePath);
-                        OpenTab(data.FilePath);
-                        e.Handled = true;
-                        return;
+                        srcWin.Dispatcher.InvokeAsync(() =>
+                        {
+                            srcWin.DetachTabAndCloseIfEmpty(data.Tab);
+                        });
                     }
 
-                    if (data.Tab != null && _tabs.Contains(data.Tab))
-                    {
-                        SetActiveTab(data.Tab);
-                        e.Handled = true;
-                        return;
-                    }
+                    // 2. Abre a aba nesta janela de destino
+                    OpenTab(filePath);
+                    Activate();
+                    e.Handled = true;
+                    return;
                 }
             }
             else if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -648,41 +905,6 @@ namespace FtPdfLite
                 }
             }
         }
-
-        private void SplitDropZone_DragOver(object sender, DragEventArgs e)
-        {
-            if (e.Data.GetDataPresent(typeof(TabDragData)) || e.Data.GetDataPresent(DataFormats.FileDrop))
-            {
-                e.Effects = DragDropEffects.Move;
-                e.Handled = true;
-            }
-        }
-
-        private void SplitDropZone_Drop(object sender, DragEventArgs e)
-        {
-            if (e.Data.GetDataPresent(typeof(TabDragData)))
-            {
-                var data = e.Data.GetData(typeof(TabDragData)) as TabDragData;
-                if (data?.Tab != null)
-                {
-                    OpenInSplitScreen(data.Tab);
-                    e.Handled = true;
-                }
-            }
-            else if (e.Data.GetDataPresent(DataFormats.FileDrop))
-            {
-                var files = e.Data.GetData(DataFormats.FileDrop) as string[];
-                if (files != null && files.Length > 0 && files[0].EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-                {
-                    var tab = new PdfDocumentTab { FilePath = files[0] };
-                    OpenInSplitScreen(tab);
-                    e.Handled = true;
-                }
-            }
-        }
-
-        private void ViewerArea_DragOver(object sender, DragEventArgs e) => SplitDropZone_DragOver(sender, e);
-        private void ViewerArea_Drop(object sender, DragEventArgs e) => SplitDropZone_Drop(sender, e);
 
         private async void OpenInSplitScreen(PdfDocumentTab tab)
         {
@@ -708,36 +930,8 @@ namespace FtPdfLite
             SplitViewSplitter.Visibility = Visibility.Visible;
             PanelSplitViewer.Visibility = Visibility.Visible;
 
-            await EnsureSplitViewerInitializedAsync();
-
-            string cleanUrl = $"{new Uri(tab.FilePath).AbsoluteUri}#toolbar=0&navpanes=0";
-            if (_isSplitWebViewInitialized && SplitPdfWebViewer.CoreWebView2 != null)
-            {
-                SplitPdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-            }
-            else
-            {
-                SplitPdfWebViewer.Source = new Uri(cleanUrl);
-            }
-        }
-
-        private async Task EnsureSplitViewerInitializedAsync()
-        {
-            if (_isSplitWebViewInitialized) return;
-            try
-            {
-                SplitPdfWebViewer.DefaultBackgroundColor = System.Drawing.Color.FromArgb(15, 23, 42);
-                var userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FtPdfLite", "WebView2_Split");
-                Directory.CreateDirectory(userDataFolder);
-                var env = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(null, userDataFolder);
-                await SplitPdfWebViewer.EnsureCoreWebView2Async(env);
-                _isSplitWebViewInitialized = true;
-                SplitPdfWebViewer.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            }
-            catch { }
+            // Native Pdfium rendering — no WebView initialization needed
+            await LoadAndRenderTab(tab, isSplit: true);
         }
 
         private void ExitSplitScreen(bool mergeBack)
@@ -748,6 +942,10 @@ namespace FtPdfLite
             ColSecondaryViewer.Width = new GridLength(0);
             SplitViewSplitter.Visibility = Visibility.Collapsed;
             PanelSplitViewer.Visibility = Visibility.Collapsed;
+
+            SplitPdfHost.Child = null;
+            _splitPdfRenderer?.Dispose();
+            _splitPdfRenderer = null;
 
             if (tab != null)
             {
@@ -819,12 +1017,40 @@ namespace FtPdfLite
             _isSplitMouseDown = false;
         }
 
+        public void DetachTabAndCloseIfEmpty(PdfDocumentTab tab)
+        {
+            int index = _tabs.IndexOf(tab);
+            if (index >= 0)
+            {
+                tab.Dispose();
+                _tabs.RemoveAt(index);
+            }
+
+            if (_tabs.Count == 0)
+            {
+                // Se não restou mais nenhuma aba nesta janela, fecha e faz sumir a janela!
+                Close();
+            }
+            else
+            {
+                if (_activeTab == tab || _activeTab == null)
+                {
+                    int newIndex = Math.Clamp(index, 0, _tabs.Count - 1);
+                    SetActiveTab(_tabs[newIndex]);
+                }
+                else
+                {
+                    UpdateTabsBar();
+                }
+            }
+        }
+
         public void RemoveTabByPath(string filePath)
         {
             var tab = _tabs.FirstOrDefault(t => t.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase));
             if (tab != null)
             {
-                CloseTab(tab);
+                DetachTabAndCloseIfEmpty(tab);
             }
         }
 
@@ -1039,7 +1265,7 @@ namespace FtPdfLite
             }
         }
 
-        private async void JumpToPage(int pageNum)
+        private void JumpToPage(int pageNum)
         {
             if (_activeTab == null || string.IsNullOrWhiteSpace(_activeTab.FilePath)) return;
 
@@ -1051,29 +1277,12 @@ namespace FtPdfLite
                 card.BringIntoView();
             }
 
-            _jumpCts?.Cancel();
-            _jumpCts = new CancellationTokenSource();
-            var token = _jumpCts.Token;
+            TxtViewerPageInfo.Text = $"Página {pageNum} de {_activeTab.TotalPages}";
 
-            string cleanUrl = $"{new Uri(_activeTab.FilePath).AbsoluteUri}#page={pageNum}&toolbar=0&navpanes=0";
-            if (_isWebViewInitialized && PdfWebViewer.CoreWebView2 != null)
+            if (_pdfRenderer != null && _activeTab.TotalPages > 0)
             {
-                try
-                {
-                    // Transição imediata com mesma cor escura de fundo para não causar flash branco,
-                    // forçando o Chromium a recarregar o documento diretamente na página alvo (#page=N)
-                    PdfWebViewer.CoreWebView2.NavigateToString("<html style='background:#0F172A;margin:0;padding:0;overflow:hidden;'></html>");
-                    await Task.Delay(40, token);
-                    if (!token.IsCancellationRequested)
-                    {
-                        PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch
-                {
-                    PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-                }
+                int zeroPage = Math.Clamp(pageNum - 1, 0, _activeTab.TotalPages - 1);
+                _pdfRenderer.Page = zeroPage;
             }
         }
 

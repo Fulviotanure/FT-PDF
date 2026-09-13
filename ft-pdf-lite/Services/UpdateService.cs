@@ -5,8 +5,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
+using MessageBox = System.Windows.MessageBox;
+using Application = System.Windows.Application;
 
 namespace FtPdfLite.Services
 {

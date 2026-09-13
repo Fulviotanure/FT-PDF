@@ -2,7 +2,7 @@
   <Folder Name="/ft-pdf-lite/">
     <Project Path="ft-pdf-lite/FtPdfLite.csproj" />
   </Folder>
-  <Folder Name="/ft-pdf/">
-    <Project Path="ft-pdf/FtPdf.csproj" />
+  <Folder Name="/_projetos_futuros/">
+    <Project Path="_projetos_futuros/ft-pdf/FtPdf.csproj" />
   </Folder>
 </Solution>

@@ -1,7 +1,6 @@
 <Window x:Class="FtPdf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="FT PDF"
         Icon="Assets/logo.png"
         Height="860" Width="1440"
@@ -398,9 +397,66 @@
                         <ColumnDefinition x:Name="ColSecondaryViewer" Width="0" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Primary Document Viewer -->
-                    <Grid Grid.Column="0">
-                        <wv2:WebView2 x:Name="PdfWebViewer" />
+                    <!-- Primary Document Viewer (Native Pdfium) -->
+                    <Grid Grid.Column="0" Background="#0F172A">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Zoom Control Bar -->
+                        <Border Grid.Row="0" Background="#0A0F1D" BorderBrush="#1E293B" BorderThickness="0,0,0,1" Padding="10,5">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Page indicator (left) -->
+                                <TextBlock x:Name="TxtViewerPageInfo" Grid.Column="0"
+                                           Text="" FontSize="11" Foreground="#64748B"
+                                           VerticalAlignment="Center" HorizontalAlignment="Left"/>
+
+                                <!-- Zoom controls (center) -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="BtnZoomOut" Content="−" Click="BtnZoomOut_Click"
+                                            Width="26" Height="24" Background="#1E293B" Foreground="#F8FAFC"
+                                            FontSize="16" FontWeight="Bold" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Reduzir zoom (Ctrl+-)">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                    <TextBlock x:Name="TxtZoomLevel" Text="100%"
+                                               Width="54" TextAlignment="Center" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="#94A3B8" VerticalAlignment="Center" Margin="6,0"/>
+                                    <Button x:Name="BtnZoomIn" Content="+" Click="BtnZoomIn_Click"
+                                            Width="26" Height="24" Background="#1E293B" Foreground="#F8FAFC"
+                                            FontSize="16" FontWeight="Bold" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Aumentar zoom (Ctrl++)">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                    <Button x:Name="BtnZoomFit" Content="⊞ Ajustar" Click="BtnZoomFit_Click"
+                                            Height="24" Padding="8,0" Margin="8,0,0,0"
+                                            Background="#1E293B" Foreground="#38BDF8"
+                                            FontSize="11" FontWeight="Medium" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Ajustar à largura">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Pages ScrollViewer -->
+                        <ScrollViewer x:Name="PdfScrollViewer" Grid.Row="1"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      Background="#13182B"
+                                      PreviewMouseWheel="PdfScrollViewer_PreviewMouseWheel"
+                                      ScrollChanged="PdfScrollViewer_ScrollChanged">
+                            <StackPanel x:Name="PdfPagesPanel"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,16,0,16"/>
+                        </ScrollViewer>
                     </Grid>
 
                     <!-- Splitter between Primary and Secondary Screen -->
@@ -466,10 +522,16 @@
                             </Grid>
                         </Border>
 
-                        <!-- Split WebView2 Component -->
-                        <Grid Grid.Row="1">
-                            <wv2:WebView2 x:Name="SplitPdfWebViewer" />
-                        </Grid>
+                        <!-- Split Native Viewer (Pdfium) -->
+                        <ScrollViewer x:Name="SplitPdfScrollViewer" Grid.Row="1"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Auto"
+                                      Background="#13182B"
+                                      PreviewMouseWheel="SplitScrollViewer_PreviewMouseWheel">
+                            <StackPanel x:Name="SplitPdfPagesPanel"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,16,0,16"/>
+                        </ScrollViewer>
                     </Grid>
                 </Grid>
 

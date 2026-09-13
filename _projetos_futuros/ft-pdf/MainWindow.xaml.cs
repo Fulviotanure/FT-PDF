@@ -7,9 +7,13 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using FtPdf.Dialogs;
 using FtPdf.Models;
 using FtPdf.Services;
+using PdfiumViewer;
+
 using Color = System.Windows.Media.Color;
 using ColorConverter = System.Windows.Media.ColorConverter;
 using Brushes = System.Windows.Media.Brushes;
@@ -62,22 +66,26 @@ namespace FtPdf
         private readonly PdfEditingService _editingService = new();
         private bool _isRawTextMode = false;
         private bool _isNotepadOpen = false;
-        private bool _isWebViewInitialized = false;
-        private CancellationTokenSource? _thumbnailCts;
-        private CancellationTokenSource? _jumpCts;
         private bool _isPageSidebarOpen = false;
         private PdfDocumentTab? _splitTab = null;
-        private bool _isSplitWebViewInitialized = false;
         private readonly Dictionary<int, Image> _pageImageMap = new();
         private readonly Dictionary<int, Border> _pageCardMap = new();
         private int _activePageNum = 1;
+        private CancellationTokenSource? _thumbnailCts;
+
+        // Native Pdfium viewer state
+        private const double BASE_DPI = 120.0;
+        private const double ZOOM_STEP = 0.15;
+        private const double ZOOM_MIN = 0.3;
+        private const double ZOOM_MAX = 4.0;
+        private CancellationTokenSource? _renderCts;
+        private CancellationTokenSource? _splitRenderCts;
 
         public MainWindow()
         {
             InitializeComponent();
             StateChanged += MainWindow_StateChanged;
             PreviewKeyDown += MainWindow_PreviewKeyDown;
-            InitializeViewerAsync();
             CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: false, this);
             Loaded += (s, e) => CheckDefaultAppBanner();
@@ -230,50 +238,224 @@ namespace FtPdf
 
         #endregion
 
-        private async void InitializeViewerAsync()
+        #region Native Pdfium Viewer
+
+        /// <summary>
+        /// Opens the Pdfium document for the tab (if not already open) and renders all pages.
+        /// </summary>
+        private async Task LoadAndRenderTab(PdfDocumentTab tab, bool isSplit = false)
         {
             try
             {
-                // Set background color to match app background (#0F172A)
-                PdfWebViewer.DefaultBackgroundColor = System.Drawing.Color.FromArgb(15, 23, 42);
-
-                var userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FtPdf", "WebView2");
-                Directory.CreateDirectory(userDataFolder);
-                var env = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(null, userDataFolder);
-                await PdfWebViewer.EnsureCoreWebView2Async(env);
-                _isWebViewInitialized = true;
-                PdfWebViewer.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                PdfWebViewer.CoreWebView2.Settings.IsZoomControlEnabled = false;
-
-                _ = EnsureSplitViewerInitializedAsync();
-
-                if (_activeTab != null && File.Exists(_activeTab.FilePath))
+                // Open the document if not already cached on the tab
+                if (tab.PdfDoc == null || tab.PdfDoc.PageCount == 0)
                 {
-                    NavigateToPdf(_activeTab.FilePath);
+                    tab.PdfDoc?.Dispose();
+                    tab.PdfDoc = await Task.Run(() => PdfViewerService.OpenDocument(tab.FilePath));
+                    if (tab.PdfDoc == null) return;
+                    tab.TotalPages = tab.PdfDoc.PageCount;
                 }
+
+                await RenderPdfPagesAsync(tab, isSplit);
             }
-            catch
-            {
-                // Fallback gracefully
-            }
+            catch { }
         }
 
-        private void NavigateToPdf(string filePath)
+        /// <summary>
+        /// Renders all pages of the tab's PDF into the viewer StackPanel.
+        /// Pages are rendered on a background thread and added to the UI progressively.
+        /// </summary>
+        private async Task RenderPdfPagesAsync(PdfDocumentTab tab, bool isSplit = false)
         {
-            // #toolbar=0&navpanes=0 completely hides the native browser toolbar,
-            // zoom buttons, print, save and the 3-dots settings menu
-            string cleanUrl = $"{new Uri(filePath).AbsoluteUri}#toolbar=0&navpanes=0";
-            if (_isWebViewInitialized && PdfWebViewer.CoreWebView2 != null)
+            var cts = new CancellationTokenSource();
+            if (isSplit)
             {
-                PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
+                _splitRenderCts?.Cancel();
+                _splitRenderCts = cts;
             }
             else
             {
-                PdfWebViewer.Source = new Uri(cleanUrl);
+                _renderCts?.Cancel();
+                _renderCts = cts;
+            }
+
+            var token = cts.Token;
+            var panel = isSplit ? SplitPdfPagesPanel : PdfPagesPanel;
+            var doc = tab.PdfDoc;
+            if (doc == null) return;
+
+            double zoom = tab.ZoomLevel;
+            int total = doc.PageCount;
+
+            // Clear old pages
+            await Dispatcher.InvokeAsync(() =>
+            {
+                panel.Children.Clear();
+                tab.PageOffsets.Clear();
+                if (!isSplit)
+                {
+                    TxtViewerPageInfo.Text = $"Página 1 de {total}";
+                    UpdateZoomLabel(zoom);
+                }
+            });
+
+            double accumulatedOffset = 16; // top margin
+
+            for (int i = 0; i < total; i++)
+            {
+                if (token.IsCancellationRequested) return;
+
+                int pageIndex = i;
+                int pageNum = i + 1;
+
+                // Get page size on background thread
+                var pageSize = await Task.Run(() => PdfViewerService.GetPageSize(doc, pageIndex, BASE_DPI, zoom));
+
+                // Create placeholder on UI thread
+                var border = await Dispatcher.InvokeAsync(() =>
+                {
+                    var img = new Image
+                    {
+                        Width = pageSize.Width,
+                        Height = pageSize.Height,
+                        Stretch = Stretch.None,
+                        HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
+                        VerticalAlignment = System.Windows.VerticalAlignment.Top
+                    };
+                    RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+
+                    var bd = new Border
+                    {
+                        Child = img,
+                        Background = Brushes.White,
+                        BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B")),
+                        BorderThickness = new Thickness(1),
+                        Margin = new Thickness(0, 0, 0, 12),
+                        Effect = new System.Windows.Media.Effects.DropShadowEffect
+                        {
+                            BlurRadius = 18,
+                            ShadowDepth = 4,
+                            Opacity = 0.35,
+                            Color = Colors.Black
+                        }
+                    };
+
+                    tab.PageOffsets[pageNum] = accumulatedOffset;
+                    panel.Children.Add(bd);
+                    return (bd, img);
+                });
+
+                accumulatedOffset += pageSize.Height + 12;
+
+                // Render bitmap on background thread
+                var bitmap = await Task.Run(() =>
+                {
+                    if (token.IsCancellationRequested) return null;
+                    return PdfViewerService.RenderPage(doc, pageIndex, BASE_DPI, zoom);
+                }, token);
+
+                if (token.IsCancellationRequested) return;
+                if (bitmap == null) continue;
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    border.img.Source = bitmap;
+                    border.img.Width = bitmap.PixelWidth;
+                    border.img.Height = bitmap.PixelHeight;
+                });
             }
         }
+
+        private void UpdateZoomLabel(double zoom)
+        {
+            TxtZoomLevel.Text = $"{(int)Math.Round(zoom * 100)}%";
+        }
+
+        private async void BtnZoomIn_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeTab == null) return;
+            _activeTab.ZoomLevel = Math.Min(ZOOM_MAX, _activeTab.ZoomLevel + ZOOM_STEP);
+            UpdateZoomLabel(_activeTab.ZoomLevel);
+            await RenderPdfPagesAsync(_activeTab, isSplit: false);
+        }
+
+        private async void BtnZoomOut_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeTab == null) return;
+            _activeTab.ZoomLevel = Math.Max(ZOOM_MIN, _activeTab.ZoomLevel - ZOOM_STEP);
+            UpdateZoomLabel(_activeTab.ZoomLevel);
+            await RenderPdfPagesAsync(_activeTab, isSplit: false);
+        }
+
+        private async void BtnZoomFit_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeTab?.PdfDoc == null) return;
+            // Fit first page width to the ScrollViewer's viewport width
+            var size = PdfViewerService.GetPageSize(_activeTab.PdfDoc, 0, BASE_DPI, 1.0);
+            double viewportWidth = PdfScrollViewer.ViewportWidth - 32; // margins
+            if (viewportWidth > 0 && size.Width > 0)
+            {
+                _activeTab.ZoomLevel = Math.Clamp(viewportWidth / size.Width, ZOOM_MIN, ZOOM_MAX);
+            }
+            else
+            {
+                _activeTab.ZoomLevel = 1.0;
+            }
+            UpdateZoomLabel(_activeTab.ZoomLevel);
+            await RenderPdfPagesAsync(_activeTab, isSplit: false);
+        }
+
+        private async void PdfScrollViewer_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control))
+            {
+                e.Handled = true;
+                if (_activeTab == null) return;
+                double newZoom = e.Delta > 0
+                    ? Math.Min(ZOOM_MAX, _activeTab.ZoomLevel + ZOOM_STEP)
+                    : Math.Max(ZOOM_MIN, _activeTab.ZoomLevel - ZOOM_STEP);
+                if (Math.Abs(newZoom - _activeTab.ZoomLevel) < 0.001) return;
+                _activeTab.ZoomLevel = newZoom;
+                UpdateZoomLabel(newZoom);
+                await RenderPdfPagesAsync(_activeTab, isSplit: false);
+            }
+        }
+
+        private async void SplitScrollViewer_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+        {
+            if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control))
+            {
+                e.Handled = true;
+                if (_splitTab == null) return;
+                double newZoom = e.Delta > 0
+                    ? Math.Min(ZOOM_MAX, _splitTab.ZoomLevel + ZOOM_STEP)
+                    : Math.Max(ZOOM_MIN, _splitTab.ZoomLevel - ZOOM_STEP);
+                if (Math.Abs(newZoom - _splitTab.ZoomLevel) < 0.001) return;
+                _splitTab.ZoomLevel = newZoom;
+                await RenderPdfPagesAsync(_splitTab, isSplit: true);
+            }
+        }
+
+        private void PdfScrollViewer_ScrollChanged(object sender, System.Windows.Controls.ScrollChangedEventArgs e)
+        {
+            if (_activeTab == null || _activeTab.PageOffsets.Count == 0) return;
+            double viewport = PdfScrollViewer.VerticalOffset + PdfScrollViewer.ViewportHeight / 2;
+            int currentPage = 1;
+            foreach (var kv in _activeTab.PageOffsets.OrderBy(x => x.Key))
+            {
+                if (kv.Value <= viewport) currentPage = kv.Key;
+                else break;
+            }
+            if (currentPage != _activePageNum)
+            {
+                _activePageNum = currentPage;
+                UpdatePageCardsHighlight();
+                TxtViewerPageInfo.Text = $"Página {currentPage} de {_activeTab.TotalPages}";
+            }
+        }
+
+        #endregion
+
 
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
@@ -382,8 +564,8 @@ namespace FtPdf
             BtnToggleNotepad.Visibility = Visibility.Visible;
             BtnTogglePages.Visibility = Visibility.Visible;
 
-            // Load the original vector PDF file cleanly without native browser toolbars
-            NavigateToPdf(tab.FilePath);
+            // Load and render via native Pdfium (no WebView, no flicker)
+            _ = LoadAndRenderTab(tab, isSplit: false);
 
             UpdateNotepadView();
             UpdatePageCards();
@@ -546,7 +728,7 @@ namespace FtPdf
                                 if (_tabs.Count > 1 && _splitTab == null)
                                 {
                                     OverlaySplitDropZone.Visibility = Visibility.Visible;
-                                    PdfWebViewer.Visibility = Visibility.Hidden;
+                                    PdfScrollViewer.Visibility = Visibility.Hidden;
                                 }
 
                                 var dragData = new TabDragData
@@ -567,8 +749,8 @@ namespace FtPdf
                             finally
                             {
                                 OverlaySplitDropZone.Visibility = Visibility.Collapsed;
-                                PdfWebViewer.Visibility = Visibility.Visible;
-                                if (_splitTab != null) SplitPdfWebViewer.Visibility = Visibility.Visible;
+                                PdfScrollViewer.Visibility = Visibility.Visible;
+                                if (_splitTab != null) SplitPdfScrollViewer.Visibility = Visibility.Visible;
                             }
                         }
                     }
@@ -1085,24 +1267,43 @@ namespace FtPdf
             if (_isNotepadOpen) CloseNotepad(); else OpenNotepad();
         }
 
+        /// <summary>Anima suavemente a largura de uma ColumnDefinition de um valor para outro.</summary>
+        private void AnimateColumn(ColumnDefinition col, double from, double to, int durationMs = 220, Action? onCompleted = null)
+        {
+            var anim = new GridLengthAnimation
+            {
+                From = new GridLength(from),
+                To = new GridLength(to),
+                Duration = new Duration(TimeSpan.FromMilliseconds(durationMs)),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+            };
+            if (onCompleted != null)
+                anim.Completed += (s, e) => onCompleted();
+            col.BeginAnimation(ColumnDefinition.WidthProperty, anim);
+        }
+
         private void OpenNotepad()
         {
             _isNotepadOpen = true;
-            ColNotepad.Width = new GridLength(530);
+            double currentWidth = ColNotepad.ActualWidth > 0 ? ColNotepad.ActualWidth : 0;
             PanelNotepad.Visibility = Visibility.Visible;
             SplitterBar.Visibility = Visibility.Visible;
             BtnToggleNotepad.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
             BtnToggleNotepad.Foreground = Brushes.White;
+            AnimateColumn(ColNotepad, currentWidth, 530);
         }
 
         private void CloseNotepad()
         {
             _isNotepadOpen = false;
-            ColNotepad.Width = new GridLength(0);
-            PanelNotepad.Visibility = Visibility.Collapsed;
-            SplitterBar.Visibility = Visibility.Collapsed;
+            double currentWidth = ColNotepad.ActualWidth > 0 ? ColNotepad.ActualWidth : 530;
             BtnToggleNotepad.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B"));
             BtnToggleNotepad.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FACC15"));
+            AnimateColumn(ColNotepad, currentWidth, 0, onCompleted: () =>
+            {
+                PanelNotepad.Visibility = Visibility.Collapsed;
+                SplitterBar.Visibility = Visibility.Collapsed;
+            });
         }
 
         private void BtnCloseNotepad_Click(object sender, RoutedEventArgs e) => CloseNotepad();
@@ -1347,37 +1548,10 @@ namespace FtPdf
             SplitViewSplitter.Visibility = Visibility.Visible;
             PanelSplitViewer.Visibility = Visibility.Visible;
 
-            await EnsureSplitViewerInitializedAsync();
-
-            string cleanUrl = $"{new Uri(tab.FilePath).AbsoluteUri}#toolbar=0&navpanes=0";
-            if (_isSplitWebViewInitialized && SplitPdfWebViewer.CoreWebView2 != null)
-            {
-                SplitPdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-            }
-            else
-            {
-                SplitPdfWebViewer.Source = new Uri(cleanUrl);
-            }
+            // Native Pdfium rendering — no WebView initialization needed
+            await LoadAndRenderTab(tab, isSplit: true);
         }
 
-        private async Task EnsureSplitViewerInitializedAsync()
-        {
-            if (_isSplitWebViewInitialized) return;
-            try
-            {
-                SplitPdfWebViewer.DefaultBackgroundColor = System.Drawing.Color.FromArgb(15, 23, 42);
-                var userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FtPdf", "WebView2_Split");
-                Directory.CreateDirectory(userDataFolder);
-                var env = await Microsoft.Web.WebView2.Core.CoreWebView2Environment.CreateAsync(null, userDataFolder);
-                await SplitPdfWebViewer.EnsureCoreWebView2Async(env);
-                _isSplitWebViewInitialized = true;
-                SplitPdfWebViewer.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                SplitPdfWebViewer.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            }
-            catch { }
-        }
 
         private void ExitSplitScreen(bool mergeBack)
         {
@@ -1479,10 +1653,11 @@ namespace FtPdf
         private void OpenPageSidebar()
         {
             _isPageSidebarOpen = true;
-            ColPageSidebar.Width = new GridLength(200);
+            double currentWidth = ColPageSidebar.ActualWidth > 0 ? ColPageSidebar.ActualWidth : 0;
             PanelPageSidebar.Visibility = Visibility.Visible;
             BtnTogglePages.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
             BtnTogglePages.Foreground = Brushes.White;
+            AnimateColumn(ColPageSidebar, currentWidth, 200);
             UpdatePageCards();
             if (_activeTab != null) StartThumbnailGeneration(_activeTab);
         }
@@ -1490,10 +1665,13 @@ namespace FtPdf
         private void ClosePageSidebar()
         {
             _isPageSidebarOpen = false;
-            ColPageSidebar.Width = new GridLength(0);
-            PanelPageSidebar.Visibility = Visibility.Collapsed;
+            double currentWidth = ColPageSidebar.ActualWidth > 0 ? ColPageSidebar.ActualWidth : 200;
             BtnTogglePages.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B"));
             BtnTogglePages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
+            AnimateColumn(ColPageSidebar, currentWidth, 0, onCompleted: () =>
+            {
+                PanelPageSidebar.Visibility = Visibility.Collapsed;
+            });
         }
 
         private void BtnClosePageSidebar_Click(object sender, RoutedEventArgs e) => ClosePageSidebar();
@@ -1678,41 +1856,57 @@ namespace FtPdf
             }
         }
 
-        private async void JumpToPage(int pageNum)
+        private System.Windows.Threading.DispatcherTimer? _scrollAnimationTimer;
+
+        private void SmoothScrollTo(System.Windows.Controls.ScrollViewer scrollViewer, double targetOffset, int durationMs = 280)
         {
-            if (_activeTab == null || string.IsNullOrWhiteSpace(_activeTab.FilePath)) return;
+            _scrollAnimationTimer?.Stop();
+            double startOffset = scrollViewer.VerticalOffset;
+            if (Math.Abs(startOffset - targetOffset) < 1) return;
+
+            var startTime = DateTime.UtcNow;
+            _scrollAnimationTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(16) // ~60 FPS
+            };
+
+            _scrollAnimationTimer.Tick += (s, e) =>
+            {
+                double elapsed = (DateTime.UtcNow - startTime).TotalMilliseconds;
+                double progress = Math.Clamp(elapsed / durationMs, 0.0, 1.0);
+
+                // Cubic ease out curve: 1 - (1 - t)^3
+                double eased = 1.0 - Math.Pow(1.0 - progress, 3);
+                double currentOffset = startOffset + (targetOffset - startOffset) * eased;
+
+                scrollViewer.ScrollToVerticalOffset(currentOffset);
+
+                if (progress >= 1.0)
+                {
+                    _scrollAnimationTimer?.Stop();
+                    scrollViewer.ScrollToVerticalOffset(targetOffset);
+                }
+            };
+
+            _scrollAnimationTimer.Start();
+        }
+
+        private void JumpToPage(int pageNum)
+        {
+            if (_activeTab == null) return;
 
             _activePageNum = pageNum;
             UpdatePageCardsHighlight();
+            TxtViewerPageInfo.Text = $"Página {pageNum} de {_activeTab.TotalPages}";
 
+            // Scroll the sidebar card into view
             if (_pageCardMap.TryGetValue(pageNum, out var card))
-            {
                 card.BringIntoView();
-            }
 
-            _jumpCts?.Cancel();
-            _jumpCts = new CancellationTokenSource();
-            var token = _jumpCts.Token;
-
-            string cleanUrl = $"{new Uri(_activeTab.FilePath).AbsoluteUri}#page={pageNum}&toolbar=0&navpanes=0";
-            if (_isWebViewInitialized && PdfWebViewer.CoreWebView2 != null)
+            // Native WPF smooth scroll — silky smooth, zero flicker
+            if (_activeTab.PageOffsets.TryGetValue(pageNum, out double offset))
             {
-                try
-                {
-                    // Transição imediata com mesma cor escura de fundo para não causar flash branco,
-                    // forçando o Chromium a recarregar o documento diretamente na página alvo (#page=N)
-                    PdfWebViewer.CoreWebView2.NavigateToString("<html style='background:#0F172A;margin:0;padding:0;overflow:hidden;'></html>");
-                    await Task.Delay(40, token);
-                    if (!token.IsCancellationRequested)
-                    {
-                        PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch
-                {
-                    PdfWebViewer.CoreWebView2.Navigate(cleanUrl);
-                }
+                SmoothScrollTo(PdfScrollViewer, offset, 280);
             }
         }
 

@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows.Media.Imaging;
-using FtPdfLite.Services;
+using FtPdf.Services;
 using PdfiumViewer;
 
-namespace FtPdfLite.Models
+namespace FtPdf.Models
 {
     public class PdfDocumentTab : IDisposable
     {
@@ -18,7 +18,6 @@ namespace FtPdfLite.Models
 
         // Viewer state per tab — preserved when switching tabs
         public double ZoomLevel { get; set; } = 1.0;
-        public int CurrentPage { get; set; } = 1;
         public double ScrollOffset { get; set; } = 0.0;
         public Dictionary<int, double> PageOffsets { get; } = new(); // vertical offset per page in the viewer
 
