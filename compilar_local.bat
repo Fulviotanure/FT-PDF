@@ -25,7 +25,7 @@ if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 echo.
 echo [2/3] Compilando FT PDF (Edição Completa) - SingleFile Self-Contained...
-dotnet publish ft-pdf/FtPdf.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
+dotnet publish _projetos_futuros/ft-pdf/FtPdf.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
 if errorlevel 1 (
     echo [ERRO] Falha ao compilar FT PDF.
     pause

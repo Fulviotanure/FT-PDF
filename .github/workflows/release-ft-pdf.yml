@@ -30,17 +30,17 @@ jobs:
 
     - name: Restore NuGet Dependencies (win-x64)
       run: |
-        dotnet restore ft-pdf/FtPdf.csproj -r win-x64
+        dotnet restore _projetos_futuros/ft-pdf/FtPdf.csproj -r win-x64
         dotnet restore ft-pdf-lite/FtPdfLite.csproj -r win-x64
 
     - name: Build FT PDF & FT PDF Lite
       run: |
-        dotnet build ft-pdf/FtPdf.csproj -c Release -r win-x64 --no-restore
+        dotnet build _projetos_futuros/ft-pdf/FtPdf.csproj -c Release -r win-x64 --no-restore
         dotnet build ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 --no-restore
 
     - name: Publish FT PDF (Edição Completa)
       run: |
-        dotnet publish ft-pdf/FtPdf.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o ./publish-ft-pdf
+        dotnet publish _projetos_futuros/ft-pdf/FtPdf.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o ./publish-ft-pdf
 
     - name: Publish FT PDF Lite (Edição Ultraleve)
       run: |
