@@ -44,7 +44,7 @@ jobs:
         Compress-Archive -Path ./publish-ft-pdf-lite/* -DestinationPath ./FT-PDF-Lite-Windows-x64.zip -Force
 
     - name: Upload Build Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: FT-PDF-Lite-Windows-x64
         path: ./publish-ft-pdf-lite/
