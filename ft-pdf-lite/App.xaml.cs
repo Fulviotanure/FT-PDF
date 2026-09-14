@@ -15,6 +15,9 @@ namespace FtPdfLite
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            SetupExceptionHandling();
+            NativePdfiumHelper.Initialize();
+
             base.OnStartup(e);
 
             bool isNewInstance;
@@ -78,6 +81,60 @@ namespace FtPdfLite
                     }
                 });
             });
+        }
+
+        private void SetupExceptionHandling()
+        {
+            AppDomain.CurrentDomain.UnhandledException += (s, args) =>
+            {
+                LogCrash(args.ExceptionObject as Exception, "AppDomain.UnhandledException");
+            };
+
+            DispatcherUnhandledException += (s, args) =>
+            {
+                LogCrash(args.Exception, "DispatcherUnhandledException");
+                args.Handled = true;
+
+                string msg = args.Exception.Message;
+                if (args.Exception is DllNotFoundException || msg.Contains("pdfium", StringComparison.OrdinalIgnoreCase))
+                {
+                    System.Windows.MessageBox.Show(
+                        "O FT PDF Lite requer a biblioteca de tempo de execução do Microsoft Visual C++ 2015-2022 (x64) para renderizar PDFs com alta performance.\n\n" +
+                        "Caso este computador seja novo ou recém-formatado, baixe e instale gratuitamente o 'Visual C++ Redistributable x64' no site oficial da Microsoft.\n\n" +
+                        $"Detalhes técnicos: {msg}",
+                        "Componente do Sistema Necessário - FT PDF Lite",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                else
+                {
+                    System.Windows.MessageBox.Show(
+                        $"Ocorreu um erro no FT PDF Lite:\n{msg}\n\nO aplicativo continuará em execução.",
+                        "Aviso FT PDF Lite",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+            };
+
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, args) =>
+            {
+                LogCrash(args.Exception, "TaskScheduler.UnobservedTaskException");
+                args.SetObserved();
+            };
+        }
+
+        private static void LogCrash(Exception? ex, string source)
+        {
+            if (ex == null) return;
+            try
+            {
+                string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FtPdf");
+                Directory.CreateDirectory(logDir);
+                string logFile = Path.Combine(logDir, "crash.log");
+                string entry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{source}]\n{ex}\n{new string('-', 50)}\n";
+                File.AppendAllText(logFile, entry);
+            }
+            catch { }
         }
 
         protected override void OnExit(ExitEventArgs e)

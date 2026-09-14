@@ -67,14 +67,15 @@ jobs:
         tag_name: ${{ github.ref_name || inputs.version_tag }}
         name: "FT PDF ${{ github.ref_name || inputs.version_tag }} (Completo e Lite)"
         body: |
-          ### 🚀 Lançamento Oficial FT PDF & FT PDF Lite
+          ### 🚀 Lançamento Oficial FT PDF & FT PDF Lite - v2.3.1
           
           Neste release você encontra os binários oficiais para Windows (64-bit):
           
-          - **FT PDF (Edição Completa):** Leitor com aceleração por hardware, abas, caixa de texto interativa flutuante, notas, assinaturas e diagnóstico.
-          - **FT PDF Lite (Edição Ultraleve):** Focado exclusivamente em leitura instantânea, abas e bloco de notas integrado. Executável único de ~6.5 MB.
+          - **FT PDF (Edição Completa):** Leitor e editor com aceleração por hardware, abas, caixa de texto flutuante, notas, assinaturas e diagnóstico.
+          - **FT PDF Lite (Edição Ultraleve):** Focado exclusivamente em leitura instantânea, abas, alta fidelidade e bloco de notas integrado.
+          - **Fix Crítico de Inicialização:** Biblioteca nativa PDFium integrada e auto-extraível diretamente dentro do executável único (corrige o fechamento repentino em máquinas sem pastas de dependências externas).
           
-          Ambos funcionam diretamente com 2 cliques, 100% Self-Contained (zero dependência de .NET).
+          Ambos funcionam diretamente com 2 cliques, 100% Self-Contained (zero dependência de .NET instalado).
         files: |
           ./publish-ft-pdf/FtPdf.exe
           ./FT-PDF-Windows-x64.zip
