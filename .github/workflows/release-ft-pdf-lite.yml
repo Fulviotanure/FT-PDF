@@ -56,14 +56,15 @@ jobs:
         tag_name: ${{ github.ref_name || inputs.version_tag }}
         name: "FT PDF Lite ${{ github.ref_name || inputs.version_tag }} (Edição Ultraleve)"
         body: |
-          ### ⚡ Release FT PDF Lite - v2.3.1 (Edição Ultraleve)
+          ### ⚡ Release FT PDF Lite - ${{ github.ref_name || inputs.version_tag }} (Edição Ultraleve)
           
           - **Leitor de PDF Vetorial Nativo** (Aceleração por Hardware)
-          - **Múltiplas Abas Integradas**
+          - **Múltiplas Abas Integradas** com suporte a senhas em documentos protegidos
+          - **Ajuste Inteligente de Tela:** Adaptação automática para diferentes resoluções e monitores sem corte de interface ou botões
           - **🔍 Validação e Diagnóstico de Integridade**
           - **📝 Bloco de Notas Integrado (Layout e Texto Cru)**
           - **Zero Ferramentas de Edição** (Focado exclusivamente em visualização rápida e segura)
-          - **Fix Crítico:** Biblioteca nativa PDFium integrada e auto-extraível no executável único (100% Standalone)
+          - **Fix Crítico de Inicialização:** Biblioteca nativa PDFium integrada e auto-extraível diretamente dentro do executável único
           
           Baixe o executável abaixo para usar imediatamente!
         files: |
