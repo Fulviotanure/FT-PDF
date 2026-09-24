@@ -80,6 +80,7 @@ namespace FtPdf
         private const double ZOOM_MAX = 4.0;
         private CancellationTokenSource? _renderCts;
         private CancellationTokenSource? _splitRenderCts;
+        private bool _commandLineArgsChecked = false;
 
         private const int WM_GETMINMAXINFO = 0x0024;
         private const int MONITOR_DEFAULTTONEAREST = 0x00000002;
@@ -134,12 +135,16 @@ namespace FtPdf
             AdjustWindowToScreen();
             StateChanged += MainWindow_StateChanged;
             PreviewKeyDown += MainWindow_PreviewKeyDown;
-            CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: false, this);
             Loaded += (s, e) => 
             {
                 AdjustWindowToScreen();
                 CheckDefaultAppBanner();
+                if (!_commandLineArgsChecked)
+                {
+                    _commandLineArgsChecked = true;
+                    CheckCommandLineArgs();
+                }
             };
         }
 
@@ -260,10 +265,15 @@ namespace FtPdf
                 {
                     for (int i = 1; i < args.Length; i++)
                     {
-                        string path = args[i].Trim('"', ' ');
-                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        string raw = args[i].Trim('"', ' ');
+                        if (!string.IsNullOrWhiteSpace(raw))
                         {
-                            OpenTab(path);
+                            string path = raw;
+                            try { path = Path.GetFullPath(raw); } catch { }
+                            if (File.Exists(path))
+                            {
+                                OpenTab(path);
+                            }
                         }
                     }
                 }
@@ -655,7 +665,11 @@ namespace FtPdf
                 }
                 catch (PdfException pex) when (pex.Error == PdfError.PasswordProtected || pex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    var dlg = new Dialogs.PasswordPromptDialog(filePath) { Owner = this };
+                    var dlg = new Dialogs.PasswordPromptDialog(filePath);
+                    if (this.IsLoaded && this.IsVisible)
+                    {
+                        try { dlg.Owner = this; } catch { }
+                    }
                     if (dlg.ShowDialog() == true && dlg.LoadedDocument != null)
                     {
                         initialDoc = dlg.LoadedDocument;
@@ -669,7 +683,14 @@ namespace FtPdf
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    if (this.IsLoaded && this.IsVisible)
+                    {
+                        MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        MessageBox.Show($"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
                     return;
                 }
 

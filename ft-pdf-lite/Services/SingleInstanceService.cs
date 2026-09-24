@@ -43,9 +43,18 @@ namespace FtPdfLite.Services
                     client.Connect(remaining);
 
                     using var writer = new StreamWriter(client, Encoding.UTF8);
-                    string payload = string.Join("\n", args ?? Array.Empty<string>());
-                    writer.Write(payload);
+                    if (args != null)
+                    {
+                        foreach (var arg in args)
+                        {
+                            if (!string.IsNullOrWhiteSpace(arg))
+                            {
+                                writer.WriteLine(arg.Trim());
+                            }
+                        }
+                    }
                     writer.Flush();
+                    try { client.WaitForPipeDrain(); } catch { }
                     return true;
                 }
                 catch (TimeoutException)
@@ -112,9 +121,20 @@ namespace FtPdfLite.Services
                             using (currentServer)
                             using (var reader = new StreamReader(currentServer, Encoding.UTF8))
                             {
-                                var payload = await reader.ReadToEndAsync().ConfigureAwait(false);
-                                var files = payload.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                                onFilesReceived(files);
+                                var files = new System.Collections.Generic.List<string>();
+                                string? line;
+                                while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) != null)
+                                {
+                                    string trimmed = line.Trim();
+                                    if (!string.IsNullOrWhiteSpace(trimmed))
+                                    {
+                                        files.Add(trimmed);
+                                    }
+                                }
+                                if (files.Count > 0)
+                                {
+                                    onFilesReceived(files.ToArray());
+                                }
                             }
                         }
                         catch { }
@@ -143,10 +163,15 @@ namespace FtPdfLite.Services
                     window.WindowState = WindowState.Normal;
                 }
 
+                if (!window.IsVisible)
+                {
+                    window.Show();
+                }
+
                 var hwnd = new WindowInteropHelper(window).Handle;
                 if (hwnd != IntPtr.Zero)
                 {
-                    ShowWindow(hwnd, SW_SHOW);
+                    ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
                 }
 

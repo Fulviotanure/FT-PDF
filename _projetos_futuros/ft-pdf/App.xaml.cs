@@ -15,6 +15,7 @@ namespace FtPdf
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            ShutdownMode = ShutdownMode.OnMainWindowClose;
             SetupExceptionHandling();
             NativePdfiumHelper.Initialize();
 
@@ -49,8 +50,24 @@ namespace FtPdf
                 // Secondary instance: allow existing window to take focus
                 SingleInstanceService.AllowSetForegroundWindow(SingleInstanceService.ASFW_ANY);
 
+                string[]? resolvedArgs = e.Args;
+                if (e.Args != null && e.Args.Length > 0)
+                {
+                    var list = new System.Collections.Generic.List<string>();
+                    foreach (var a in e.Args)
+                    {
+                        string clean = a.Trim('"', ' ');
+                        if (!string.IsNullOrWhiteSpace(clean))
+                        {
+                            try { list.Add(Path.GetFullPath(clean)); }
+                            catch { list.Add(clean); }
+                        }
+                    }
+                    resolvedArgs = list.ToArray();
+                }
+
                 // Pass command-line arguments to existing instance
-                if (SingleInstanceService.TrySendArgs(PipeName, e.Args))
+                if (SingleInstanceService.TrySendArgs(PipeName, resolvedArgs))
                 {
                     Shutdown(0);
                     return;
@@ -72,10 +89,15 @@ namespace FtPdf
                         SingleInstanceService.BringToForeground(win);
                         foreach (var file in files)
                         {
-                            string path = file.Trim('"', ' ');
-                            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                            string raw = file.Trim('"', ' ');
+                            if (!string.IsNullOrWhiteSpace(raw))
                             {
-                                win.OpenTab(path);
+                                string path = raw;
+                                try { path = Path.GetFullPath(raw); } catch { }
+                                if (File.Exists(path))
+                                {
+                                    win.OpenTab(path);
+                                }
                             }
                         }
                     }

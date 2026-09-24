@@ -74,6 +74,7 @@ namespace FtPdfLite
         private CancellationTokenSource? _thumbnailCts;
         private PdfRenderer? _pdfRenderer;
         private PdfRenderer? _splitPdfRenderer;
+        private bool _commandLineArgsChecked = false;
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -130,12 +131,16 @@ namespace FtPdfLite
             SizeChanged += (s, e) => UpdateTabsBar();
             PreviewKeyDown += MainWindow_PreviewKeyDown;
             InitializePdfRenderer();
-            CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: true, this);
             Loaded += (s, e) => 
             {
                 AdjustWindowToScreen();
                 CheckDefaultAppBanner();
+                if (!_commandLineArgsChecked)
+                {
+                    _commandLineArgsChecked = true;
+                    CheckCommandLineArgs();
+                }
             };
         }
 
@@ -256,10 +261,15 @@ namespace FtPdfLite
                 {
                     for (int i = 1; i < args.Length; i++)
                     {
-                        string path = args[i].Trim('"', ' ');
-                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        string raw = args[i].Trim('"', ' ');
+                        if (!string.IsNullOrWhiteSpace(raw))
                         {
-                            OpenTab(path);
+                            string path = raw;
+                            try { path = Path.GetFullPath(raw); } catch { }
+                            if (File.Exists(path))
+                            {
+                                OpenTab(path);
+                            }
                         }
                     }
                 }
@@ -602,7 +612,11 @@ namespace FtPdfLite
                 }
                 catch (PdfException pex) when (pex.Error == PdfError.PasswordProtected || pex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    var dlg = new PasswordPromptDialog(filePath) { Owner = this };
+                    var dlg = new PasswordPromptDialog(filePath);
+                    if (this.IsLoaded && this.IsVisible)
+                    {
+                        try { dlg.Owner = this; } catch { }
+                    }
                     if (dlg.ShowDialog() == true && dlg.LoadedDocument != null)
                     {
                         initialDoc = dlg.LoadedDocument;
@@ -616,7 +630,14 @@ namespace FtPdfLite
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    if (this.IsLoaded && this.IsVisible)
+                    {
+                        MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        MessageBox.Show($"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
                     return;
                 }
 

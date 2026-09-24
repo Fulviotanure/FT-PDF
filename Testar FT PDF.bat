@@ -16,7 +16,7 @@ echo ================================================================
 echo       FT PDF (Edicao Completa) - Teste Local dos Arquivos Brutos
 echo ================================================================
 echo.
-dotnet run
+dotnet run -- %*
 echo.
 if %ERRORLEVEL% NEQ 0 (
     echo Ocorreu uma interrupcao na execucao com codigo %ERRORLEVEL%.
