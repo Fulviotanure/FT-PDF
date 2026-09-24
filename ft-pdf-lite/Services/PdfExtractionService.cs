@@ -75,7 +75,7 @@ namespace FtPdfLite.Services
             "credit", "debit", "balance", "customer", "client", "number", "the", "and", "for", "with", "from"
         };
 
-        public ExtractionResult ExtractAndAnalyze(string filePath)
+        public ExtractionResult ExtractAndAnalyze(string filePath, string? password = null)
         {
             var result = new ExtractionResult();
             var report = result.Report;
@@ -115,10 +115,18 @@ namespace FtPdfLite.Services
 
             try
             {
-                using var document = PdfDocument.Open(filePath);
+                var parsingOptions = new ParsingOptions();
+                if (!string.IsNullOrEmpty(password))
+                {
+                    parsingOptions.Password = password;
+                }
+
+                using var document = PdfDocument.Open(filePath, parsingOptions);
                 report.TotalPages = document.NumberOfPages;
                 props.PdfVersion = $"PDF {document.Version:0.0}";
-                props.Security = document.IsEncrypted ? "Criptografado / Protegido" : "Sem restrições (Livre)";
+                props.Security = document.IsEncrypted 
+                    ? (!string.IsNullOrEmpty(password) ? "Criptografado / Protegido (Desbloqueado com Senha)" : "Criptografado / Protegido") 
+                    : "Sem restrições (Livre)";
 
                 // Extract Document Metadata
                 var info = document.Information;
@@ -406,12 +414,14 @@ namespace FtPdfLite.Services
             catch (Exception ex)
             {
                 report.IntegrityScore = 0.0;
-                report.IntegrityStatus = "0% - Erro";
-                report.DocumentType = "Arquivo Corrompido / Ilegível";
-                report.ImportVerdict = "Arquivo não importável";
-                report.ImportVerdictColor = "#EF4444";
-                report.DiagnosticWarnings.Add($"Falha ao inspecionar o arquivo: {ex.Message}");
-                result.FormattedText = $"[Erro ao extrair texto do documento: {ex.Message}]";
+                report.IntegrityStatus = "0% - Protegido / Erro";
+                report.DocumentType = !string.IsNullOrEmpty(password) ? "Documento Protegido por Senha" : "Arquivo Corrompido / Ilegível";
+                report.ImportVerdict = !string.IsNullOrEmpty(password) ? "Visualização ativa via Pdfium" : "Arquivo não importável";
+                report.ImportVerdictColor = !string.IsNullOrEmpty(password) ? "#3B82F6" : "#EF4444";
+                report.DiagnosticWarnings.Add($"Aviso de extração de texto via PdfPig: {ex.Message}");
+                result.FormattedText = !string.IsNullOrEmpty(password) 
+                    ? $"[Documento protegido por senha desbloqueado no visualizador nativo. Extração avançada de texto via PdfPig: {ex.Message}]"
+                    : $"[Erro ao extrair texto do documento: {ex.Message}]";
                 result.RawText = result.FormattedText;
             }
 

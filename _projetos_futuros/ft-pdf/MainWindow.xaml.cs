@@ -81,14 +81,139 @@ namespace FtPdf
         private CancellationTokenSource? _renderCts;
         private CancellationTokenSource? _splitRenderCts;
 
+        private const int WM_GETMINMAXINFO = 0x0024;
+        private const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int x;
+            public int y;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public int dwFlags;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr handle, int flags);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll", PreserveSig = true)]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_ROUND = 2;
+
         public MainWindow()
         {
             InitializeComponent();
+            AdjustWindowToScreen();
             StateChanged += MainWindow_StateChanged;
             PreviewKeyDown += MainWindow_PreviewKeyDown;
             CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: false, this);
-            Loaded += (s, e) => CheckDefaultAppBanner();
+            Loaded += (s, e) => 
+            {
+                AdjustWindowToScreen();
+                CheckDefaultAppBanner();
+            };
+        }
+
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            try
+            {
+                var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                var source = System.Windows.Interop.HwndSource.FromHwnd(helper.Handle);
+                source?.AddHook(WindowProc);
+
+                int preference = DWMWCP_ROUND;
+                DwmSetWindowAttribute(helper.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int));
+            }
+            catch { }
+        }
+
+        private IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_GETMINMAXINFO)
+            {
+                WmGetMinMaxInfo(hwnd, lParam);
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
+        {
+            var mmi = System.Runtime.InteropServices.Marshal.PtrToStructure<MINMAXINFO>(lParam);
+            IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var mi = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
+                if (GetMonitorInfo(monitor, ref mi))
+                {
+                    mmi.ptMaxPosition.x = Math.Abs(mi.rcWork.Left - mi.rcMonitor.Left);
+                    mmi.ptMaxPosition.y = Math.Abs(mi.rcWork.Top - mi.rcMonitor.Top);
+                    mmi.ptMaxSize.x = Math.Abs(mi.rcWork.Right - mi.rcWork.Left);
+                    mmi.ptMaxSize.y = Math.Abs(mi.rcWork.Bottom - mi.rcWork.Top);
+                    mmi.ptMinTrackSize.x = 760;
+                    mmi.ptMinTrackSize.y = 450;
+                }
+            }
+            System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, lParam, true);
+        }
+
+        private void AdjustWindowToScreen()
+        {
+            try
+            {
+                var workArea = SystemParameters.WorkArea;
+                if (workArea.Width <= 0 || workArea.Height <= 0) return;
+
+                MaxWidth = workArea.Width;
+                MaxHeight = workArea.Height;
+
+                if (workArea.Width <= 1366 || workArea.Height <= 768)
+                {
+                    WindowState = WindowState.Maximized;
+                }
+                else
+                {
+                    double targetW = Math.Min(1180, workArea.Width * 0.90);
+                    double targetH = Math.Min(700, workArea.Height * 0.90);
+
+                    Width = targetW;
+                    Height = targetH;
+                    Left = workArea.Left + (workArea.Width - targetW) / 2.0;
+                    Top = workArea.Top + (workArea.Height - targetH) / 2.0;
+                }
+            }
+            catch { }
         }
 
         private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -251,7 +376,7 @@ namespace FtPdf
                 if (tab.PdfDoc == null || tab.PdfDoc.PageCount == 0)
                 {
                     tab.PdfDoc?.Dispose();
-                    tab.PdfDoc = await Task.Run(() => PdfViewerService.OpenDocument(tab.FilePath));
+                    tab.PdfDoc = await Task.Run(() => PdfViewerService.OpenDocument(tab.FilePath, tab.Password));
                     if (tab.PdfDoc == null) return;
                     tab.TotalPages = tab.PdfDoc.PageCount;
                 }
@@ -520,9 +645,40 @@ namespace FtPdf
                     return;
                 }
 
+                // Tenta abrir o documento para verificar integridade e detecção de senha
+                PdfDocument? initialDoc = null;
+                string? password = null;
+
+                try
+                {
+                    initialDoc = PdfDocument.Load(filePath);
+                }
+                catch (PdfException pex) when (pex.Error == PdfError.PasswordProtected || pex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    var dlg = new Dialogs.PasswordPromptDialog(filePath) { Owner = this };
+                    if (dlg.ShowDialog() == true && dlg.LoadedDocument != null)
+                    {
+                        initialDoc = dlg.LoadedDocument;
+                        password = dlg.EnteredPassword;
+                    }
+                    else
+                    {
+                        // Usuário cancelou a abertura do arquivo protegido
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 var tab = new PdfDocumentTab
                 {
-                    FilePath = filePath
+                    FilePath = filePath,
+                    Password = password,
+                    PdfDoc = initialDoc,
+                    TotalPages = initialDoc?.PageCount ?? 1
                 };
 
                 _tabs.Add(tab);
@@ -531,11 +687,11 @@ namespace FtPdf
                 // Run extraction & integrity analysis in background
                 _ = Task.Run(() =>
                 {
-                    var result = _extractionService.ExtractAndAnalyze(filePath);
+                    var result = _extractionService.ExtractAndAnalyze(filePath, password);
                     Dispatcher.Invoke(() =>
                     {
                         tab.Extraction = result;
-                        tab.TotalPages = result.Report.TotalPages;
+                        tab.TotalPages = result.Report.TotalPages > 0 ? result.Report.TotalPages : (initialDoc?.PageCount ?? 1);
                         if (_activeTab == tab)
                         {
                             UpdateNotepadView();
@@ -654,10 +810,11 @@ namespace FtPdf
 
                 var icon = new TextBlock
                 {
-                    Text = "📄",
+                    Text = tab.IsPasswordProtected ? "🔒" : "📄",
                     FontSize = 11,
                     Margin = new Thickness(0, 0, tabWidth > 70 ? 6 : 2, 0),
-                    VerticalAlignment = VerticalAlignment.Center
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = tab.IsPasswordProtected ? "Documento Protegido por Senha" : null
                 };
                 DockPanel.SetDock(icon, Dock.Left);
 
@@ -939,7 +1096,9 @@ namespace FtPdf
             double pdfPageH = 842;
             try
             {
-                using var doc = PdfSharp.Pdf.IO.PdfReader.Open(_activeTab.FilePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import);
+                using var doc = string.IsNullOrEmpty(_activeTab.Password)
+                    ? PdfSharp.Pdf.IO.PdfReader.Open(_activeTab.FilePath, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import)
+                    : PdfSharp.Pdf.IO.PdfReader.Open(_activeTab.FilePath, _activeTab.Password, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import);
                 if (pageNumber <= doc.PageCount)
                 {
                     pdfPageW = doc.Pages[pageNumber - 1].Width.Point;
@@ -975,7 +1134,8 @@ namespace FtPdf
                         fontSize,
                         xColor,
                         isBold,
-                        isItalic
+                        isItalic,
+                        _activeTab.Password
                     );
 
                     PopupFloatingTextBox.IsOpen = false;
@@ -1023,7 +1183,8 @@ namespace FtPdf
                             dialog.PosY,
                             dialog.RectWidth,
                             dialog.RectHeight,
-                            dialog.HighlightColor
+                            dialog.HighlightColor,
+                            _activeTab.Password
                         );
 
                         OpenTab(saveDialog.FileName);
@@ -1069,7 +1230,8 @@ namespace FtPdf
                             dialog.PosX,
                             dialog.PosY,
                             dialog.SigWidth,
-                            dialog.SigHeight
+                            dialog.SigHeight,
+                            _activeTab.Password
                         );
 
                         OpenTab(saveDialog.FileName);
@@ -1097,7 +1259,7 @@ namespace FtPdf
             {
                 try
                 {
-                    _editingService.ExtractPages(_activeTab.FilePath, dialog.OutputFilePath, dialog.SelectedPages);
+                    _editingService.ExtractPages(_activeTab.FilePath, dialog.OutputFilePath, dialog.SelectedPages, _activeTab.Password);
                     MessageBox.Show(this, $"Páginas extraídas com sucesso para:\n{dialog.OutputFilePath}", "Extração Concluída", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
@@ -1142,7 +1304,7 @@ namespace FtPdf
                 string tempOut = Path.Combine(Path.GetDirectoryName(_activeTab.FilePath)!,
                     Path.GetFileNameWithoutExtension(_activeTab.FilePath) + "_girado.pdf");
 
-                _editingService.RotatePages(_activeTab.FilePath, tempOut, Enumerable.Range(1, _activeTab.TotalPages), 90);
+                _editingService.RotatePages(_activeTab.FilePath, tempOut, Enumerable.Range(1, _activeTab.TotalPages), 90, _activeTab.Password);
 
                 OpenTab(tempOut);
             }
@@ -1803,7 +1965,9 @@ namespace FtPdf
                 try
                 {
                     if (!File.Exists(tab.FilePath)) return;
-                    using var doc = PdfiumViewer.PdfDocument.Load(tab.FilePath);
+                    using var doc = !string.IsNullOrEmpty(tab.Password)
+                        ? PdfiumViewer.PdfDocument.Load(tab.FilePath, tab.Password)
+                        : PdfiumViewer.PdfDocument.Load(tab.FilePath);
                     int total = doc.PageCount;
 
                     for (int i = 0; i < total; i++)

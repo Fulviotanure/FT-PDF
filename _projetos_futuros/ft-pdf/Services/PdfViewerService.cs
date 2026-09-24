@@ -56,13 +56,15 @@ namespace FtPdf.Services
         }
 
         /// <summary>
-        /// Opens a PdfDocument from a file path. Caller is responsible for Dispose().
+        /// Opens a PdfDocument from a file path with optional password. Caller is responsible for Dispose().
         /// </summary>
-        public static PdfDocument? OpenDocument(string filePath)
+        public static PdfDocument? OpenDocument(string filePath, string? password = null)
         {
             try
             {
-                return PdfDocument.Load(filePath);
+                return string.IsNullOrEmpty(password) 
+                    ? PdfDocument.Load(filePath) 
+                    : PdfDocument.Load(filePath, password);
             }
             catch
             {

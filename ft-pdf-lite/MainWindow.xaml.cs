@@ -81,16 +81,62 @@ namespace FtPdfLite
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         private const int DWMWCP_ROUND = 2;
 
+        private const int WM_GETMINMAXINFO = 0x0024;
+        private const int MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int x;
+            public int y;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct MINMAXINFO
+        {
+            public POINT ptReserved;
+            public POINT ptMaxSize;
+            public POINT ptMaxPosition;
+            public POINT ptMinTrackSize;
+            public POINT ptMaxTrackSize;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public int dwFlags;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr MonitorFromWindow(IntPtr handle, int flags);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
         public MainWindow()
         {
             InitializeComponent();
+            AdjustWindowToScreen();
             StateChanged += MainWindow_StateChanged;
             SizeChanged += (s, e) => UpdateTabsBar();
             PreviewKeyDown += MainWindow_PreviewKeyDown;
             InitializePdfRenderer();
             CheckCommandLineArgs();
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: true, this);
-            Loaded += (s, e) => CheckDefaultAppBanner();
+            Loaded += (s, e) => 
+            {
+                AdjustWindowToScreen();
+                CheckDefaultAppBanner();
+            };
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -99,8 +145,69 @@ namespace FtPdfLite
             try
             {
                 var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                var source = System.Windows.Interop.HwndSource.FromHwnd(helper.Handle);
+                source?.AddHook(WindowProc);
+
                 int preference = DWMWCP_ROUND;
                 DwmSetWindowAttribute(helper.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int));
+            }
+            catch { }
+        }
+
+        private IntPtr WindowProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_GETMINMAXINFO)
+            {
+                WmGetMinMaxInfo(hwnd, lParam);
+                handled = true;
+            }
+            return IntPtr.Zero;
+        }
+
+        private static void WmGetMinMaxInfo(IntPtr hwnd, IntPtr lParam)
+        {
+            var mmi = System.Runtime.InteropServices.Marshal.PtrToStructure<MINMAXINFO>(lParam);
+            IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor != IntPtr.Zero)
+            {
+                var mi = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
+                if (GetMonitorInfo(monitor, ref mi))
+                {
+                    mmi.ptMaxPosition.x = Math.Abs(mi.rcWork.Left - mi.rcMonitor.Left);
+                    mmi.ptMaxPosition.y = Math.Abs(mi.rcWork.Top - mi.rcMonitor.Top);
+                    mmi.ptMaxSize.x = Math.Abs(mi.rcWork.Right - mi.rcWork.Left);
+                    mmi.ptMaxSize.y = Math.Abs(mi.rcWork.Bottom - mi.rcWork.Top);
+                    mmi.ptMinTrackSize.x = 760;
+                    mmi.ptMinTrackSize.y = 450;
+                }
+            }
+            System.Runtime.InteropServices.Marshal.StructureToPtr(mmi, lParam, true);
+        }
+
+        private void AdjustWindowToScreen()
+        {
+            try
+            {
+                var workArea = SystemParameters.WorkArea;
+                if (workArea.Width <= 0 || workArea.Height <= 0) return;
+
+                MaxWidth = workArea.Width;
+                MaxHeight = workArea.Height;
+
+                if (workArea.Width <= 1366 || workArea.Height <= 768)
+                {
+                    WindowState = WindowState.Maximized;
+                }
+                else
+                {
+                    double targetW = Math.Min(1180, workArea.Width * 0.90);
+                    double targetH = Math.Min(700, workArea.Height * 0.90);
+
+                    Width = targetW;
+                    Height = targetH;
+                    Left = workArea.Left + (workArea.Width - targetW) / 2.0;
+                    Top = workArea.Top + (workArea.Height - targetH) / 2.0;
+                }
             }
             catch { }
         }
@@ -196,6 +303,7 @@ namespace FtPdfLite
             {
                 WindowRootBorder.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(10);
                 WindowRootBorder.BorderThickness = isMaximized ? new Thickness(0) : new Thickness(1);
+                WindowRootBorder.Padding = isMaximized ? new Thickness(6) : new Thickness(0);
             }
             if (TitleBarBorder != null)
             {
@@ -357,7 +465,10 @@ namespace FtPdfLite
             {
                 if (tab.PdfDoc == null)
                 {
-                    tab.PdfDoc = await Task.Run(() => PdfDocument.Load(tab.FilePath));
+                    tab.PdfDoc = await Task.Run(() => 
+                        !string.IsNullOrEmpty(tab.Password) 
+                            ? PdfDocument.Load(tab.FilePath, tab.Password) 
+                            : PdfDocument.Load(tab.FilePath));
                     if (tab.PdfDoc == null) return;
                     tab.TotalPages = tab.PdfDoc.PageCount;
                 }
@@ -481,9 +592,40 @@ namespace FtPdfLite
                     return;
                 }
 
+                // Tenta abrir o documento para verificar integridade e detecção de senha
+                PdfDocument? initialDoc = null;
+                string? password = null;
+
+                try
+                {
+                    initialDoc = PdfDocument.Load(filePath);
+                }
+                catch (PdfException pex) when (pex.Error == PdfError.PasswordProtected || pex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    var dlg = new PasswordPromptDialog(filePath) { Owner = this };
+                    if (dlg.ShowDialog() == true && dlg.LoadedDocument != null)
+                    {
+                        initialDoc = dlg.LoadedDocument;
+                        password = dlg.EnteredPassword;
+                    }
+                    else
+                    {
+                        // Usuário cancelou a abertura do arquivo protegido
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
                 var tab = new PdfDocumentTab
                 {
-                    FilePath = filePath
+                    FilePath = filePath,
+                    Password = password,
+                    PdfDoc = initialDoc,
+                    TotalPages = initialDoc?.PageCount ?? 1
                 };
 
                 _tabs.Add(tab);
@@ -492,11 +634,11 @@ namespace FtPdfLite
                 // Run extraction & integrity analysis in background
                 _ = Task.Run(() =>
                 {
-                    var result = _extractionService.ExtractAndAnalyze(filePath);
+                    var result = _extractionService.ExtractAndAnalyze(filePath, password);
                     Dispatcher.Invoke(() =>
                     {
                         tab.Extraction = result;
-                        tab.TotalPages = result.Report.TotalPages;
+                        tab.TotalPages = result.Report.TotalPages > 0 ? result.Report.TotalPages : (initialDoc?.PageCount ?? 1);
                         if (_activeTab == tab)
                         {
                             UpdateNotepadView();
@@ -645,28 +787,42 @@ namespace FtPdfLite
                 var dp = new DockPanel { LastChildFill = true, VerticalAlignment = VerticalAlignment.Center };
 
                 FrameworkElement iconElement;
-                try
-                {
-                    var img = new Image
-                    {
-                        Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/logo.png")),
-                        Width = 15,
-                        Height = 15,
-                        Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
-                    iconElement = img;
-                }
-                catch
+                if (tab.IsPasswordProtected)
                 {
                     iconElement = new TextBlock
                     {
-                        Text = "📄",
+                        Text = "🔒",
                         FontSize = 11,
                         Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
-                        VerticalAlignment = VerticalAlignment.Center
+                        VerticalAlignment = VerticalAlignment.Center,
+                        ToolTip = "Documento Protegido por Senha"
                     };
+                }
+                else
+                {
+                    try
+                    {
+                        var img = new Image
+                        {
+                            Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/logo.png")),
+                            Width = 15,
+                            Height = 15,
+                            Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
+                            VerticalAlignment = VerticalAlignment.Center
+                        };
+                        RenderOptions.SetBitmapScalingMode(img, BitmapScalingMode.HighQuality);
+                        iconElement = img;
+                    }
+                    catch
+                    {
+                        iconElement = new TextBlock
+                        {
+                            Text = "📄",
+                            FontSize = 11,
+                            Margin = new Thickness(0, 0, tabWidth > 80 ? 8 : 4, 0),
+                            VerticalAlignment = VerticalAlignment.Center
+                        };
+                    }
                 }
                 DockPanel.SetDock(iconElement, Dock.Left);
 
@@ -1212,7 +1368,9 @@ namespace FtPdfLite
                 try
                 {
                     if (!File.Exists(tab.FilePath)) return;
-                    using var doc = PdfiumViewer.PdfDocument.Load(tab.FilePath);
+                    using var doc = !string.IsNullOrEmpty(tab.Password)
+                        ? PdfiumViewer.PdfDocument.Load(tab.FilePath, tab.Password)
+                        : PdfiumViewer.PdfDocument.Load(tab.FilePath);
                     int total = doc.PageCount;
 
                     for (int i = 0; i < total; i++)

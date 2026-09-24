@@ -11,6 +11,8 @@ namespace FtPdfLite.Models
     {
         public string Id { get; set; } = Guid.NewGuid().ToString();
         public string FilePath { get; set; } = string.Empty;
+        public string? Password { get; set; }
+        public bool IsPasswordProtected => !string.IsNullOrEmpty(Password);
         public string FileName => Path.GetFileName(FilePath);
         public int TotalPages { get; set; } = 1;
         public ExtractionResult? Extraction { get; set; }

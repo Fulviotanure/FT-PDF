@@ -42,14 +42,20 @@ namespace FtPdf.Services
         /// <summary>
         /// Extracts word-level coordinates and text for interactive on-screen text selection.
         /// </summary>
-        public List<PageTextData> ExtractTextLayers(string filePath, double displayWidth)
+        public List<PageTextData> ExtractTextLayers(string filePath, double displayWidth, string? password = null)
         {
             var result = new List<PageTextData>();
             if (!File.Exists(filePath)) return result;
 
             try
             {
-                using var document = UglyToad.PdfPig.PdfDocument.Open(filePath);
+                var options = new UglyToad.PdfPig.ParsingOptions();
+                if (!string.IsNullOrEmpty(password))
+                {
+                    options.Password = password;
+                }
+
+                using var document = UglyToad.PdfPig.PdfDocument.Open(filePath, options);
                 for (int i = 1; i <= document.NumberOfPages; i++)
                 {
                     var page = document.GetPage(i);
@@ -89,9 +95,16 @@ namespace FtPdf.Services
             return result;
         }
 
-        public void InsertText(string sourcePath, string outputPath, int pageNumber, string text, double x, double y, double fontSize, XColor color)
+        private static PdfSharp.Pdf.PdfDocument OpenPdfSharp(string filePath, PdfDocumentOpenMode mode, string? password = null)
         {
-            InsertFormattedTextBox(sourcePath, outputPath, pageNumber, text, x, y, 400, fontSize, color, false, false);
+            return string.IsNullOrEmpty(password)
+                ? PdfReader.Open(filePath, mode)
+                : PdfReader.Open(filePath, password, mode);
+        }
+
+        public void InsertText(string sourcePath, string outputPath, int pageNumber, string text, double x, double y, double fontSize, XColor color, string? password = null)
+        {
+            InsertFormattedTextBox(sourcePath, outputPath, pageNumber, text, x, y, 400, fontSize, color, false, false, password);
         }
 
         public void InsertFormattedTextBox(
@@ -105,9 +118,10 @@ namespace FtPdf.Services
             double fontSize, 
             XColor color, 
             bool isBold, 
-            bool isItalic)
+            bool isItalic,
+            string? password = null)
         {
-            using var document = PdfReader.Open(sourcePath, PdfDocumentOpenMode.Modify);
+            using var document = OpenPdfSharp(sourcePath, PdfDocumentOpenMode.Modify, password);
             if (pageNumber < 1 || pageNumber > document.PageCount)
                 throw new ArgumentOutOfRangeException(nameof(pageNumber), "Número de página inválido.");
 
@@ -165,9 +179,9 @@ namespace FtPdf.Services
             document.Save(outputPath);
         }
 
-        public void InsertSignature(string sourcePath, string outputPath, int pageNumber, byte[] imageBytes, double x, double y, double width, double height)
+        public void InsertSignature(string sourcePath, string outputPath, int pageNumber, byte[] imageBytes, double x, double y, double width, double height, string? password = null)
         {
-            using var document = PdfReader.Open(sourcePath, PdfDocumentOpenMode.Modify);
+            using var document = OpenPdfSharp(sourcePath, PdfDocumentOpenMode.Modify, password);
             if (pageNumber < 1 || pageNumber > document.PageCount)
                 throw new ArgumentOutOfRangeException(nameof(pageNumber), "Número de página inválido.");
 
@@ -180,14 +194,14 @@ namespace FtPdf.Services
             document.Save(outputPath);
         }
 
-        public void AddHighlight(string sourcePath, string outputPath, int pageNumber, double x, double y, double width, double height, XColor highlightColor)
+        public void AddHighlight(string sourcePath, string outputPath, int pageNumber, double x, double y, double width, double height, XColor highlightColor, string? password = null)
         {
-            AddHighlightRectangles(sourcePath, outputPath, pageNumber, new[] { new Rect(x, y, width, height) }, highlightColor);
+            AddHighlightRectangles(sourcePath, outputPath, pageNumber, new[] { new Rect(x, y, width, height) }, highlightColor, password);
         }
 
-        public void AddHighlightRectangles(string sourcePath, string outputPath, int pageNumber, IEnumerable<Rect> rects, XColor highlightColor)
+        public void AddHighlightRectangles(string sourcePath, string outputPath, int pageNumber, IEnumerable<Rect> rects, XColor highlightColor, string? password = null)
         {
-            using var document = PdfReader.Open(sourcePath, PdfDocumentOpenMode.Modify);
+            using var document = OpenPdfSharp(sourcePath, PdfDocumentOpenMode.Modify, password);
             if (pageNumber < 1 || pageNumber > document.PageCount)
                 throw new ArgumentOutOfRangeException(nameof(pageNumber), "Número de página inválido.");
 
@@ -223,9 +237,9 @@ namespace FtPdf.Services
             outputDocument.Save(outputPath);
         }
 
-        public void ExtractPages(string sourcePath, string outputPath, IEnumerable<int> pageNumbers)
+        public void ExtractPages(string sourcePath, string outputPath, IEnumerable<int> pageNumbers, string? password = null)
         {
-            using var inputDocument = PdfReader.Open(sourcePath, PdfDocumentOpenMode.Import);
+            using var inputDocument = OpenPdfSharp(sourcePath, PdfDocumentOpenMode.Import, password);
             using var outputDocument = new PdfDocument();
 
             var uniquePages = pageNumbers.Distinct().OrderBy(p => p);
@@ -240,9 +254,9 @@ namespace FtPdf.Services
             outputDocument.Save(outputPath);
         }
 
-        public void RotatePages(string sourcePath, string outputPath, IEnumerable<int> pageNumbers, int angleDegrees)
+        public void RotatePages(string sourcePath, string outputPath, IEnumerable<int> pageNumbers, int angleDegrees, string? password = null)
         {
-            using var document = PdfReader.Open(sourcePath, PdfDocumentOpenMode.Modify);
+            using var document = OpenPdfSharp(sourcePath, PdfDocumentOpenMode.Modify, password);
             var targetPages = new HashSet<int>(pageNumbers);
 
             for (int i = 0; i < document.PageCount; i++)
