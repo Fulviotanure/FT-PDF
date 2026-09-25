@@ -132,9 +132,35 @@ namespace FtPdfLite.Services
                     return true;
                 }
 
-                // Cria script para matar processo anterior, apagar antigo, mover o novo e reiniciar
-                string batPath = Path.Combine(tempDir, "ft_pdf_lite_replace_update.bat");
-                string batContent = $@"@echo off
+                // Substituição segura do executável antigo pelo novo:
+                // Usamos o PowerShell que suporta nativamente caminhos Unicode com acentos (ex: C:\Users\Luccas Octávio\Desktop)
+                // e faz a troca em segundo plano sem abrir telas pretas de terminal nem sofrer com conflitos de codificação do cmd.exe.
+                string escCurrent = currentExePath.Replace("'", "''");
+                string escTemp = tempFile.Replace("'", "''");
+
+                string psCommand = $"Start-Sleep -Seconds 1; " +
+                    $"for ($i = 0; $i -lt 30; $i++) {{ " +
+                    $"  try {{ Remove-Item -LiteralPath '{escCurrent}' -Force -ErrorAction Stop; break; }} catch {{ Start-Sleep -Milliseconds 500; }} " +
+                    $"}} " +
+                    $"Move-Item -LiteralPath '{escTemp}' -Destination '{escCurrent}' -Force; " +
+                    $"Start-Process -FilePath '{escCurrent}'";
+
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "powershell.exe",
+                        Arguments = $"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command \"{psCommand}\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    });
+                }
+                catch
+                {
+                    // Fallback caso powershell.exe esteja inacessível: gera script .bat com suporte a UTF-8 (chcp 65001)
+                    string batPath = Path.Combine(tempDir, "ft_pdf_lite_replace_update.bat");
+                    string batContent = $@"@echo off
+chcp 65001 >nul
 timeout /t 1 /nobreak >nul
 :wait_loop
 del /f /q ""{currentExePath}"" 2>nul
@@ -146,14 +172,15 @@ move /y ""{tempFile}"" ""{currentExePath}""
 start """" ""{currentExePath}""
 del ""%~f0""
 ";
-                await File.WriteAllTextAsync(batPath, batContent);
+                    await File.WriteAllTextAsync(batPath, batContent, new System.Text.UTF8Encoding(false));
 
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = batPath,
-                    CreateNoWindow = true,
-                    UseShellExecute = true
-                });
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = batPath,
+                        CreateNoWindow = true,
+                        UseShellExecute = true
+                    });
+                }
 
                 Application.Current.Shutdown();
                 return true;
@@ -165,25 +192,43 @@ del ""%~f0""
             }
         }
 
-        public static async Task AutoCheckOnStartupAsync(bool isLite, Window? owner)
+        private static int _isChecking = 0;
+        private static bool _hasPromptedThisSession = false;
+
+        public static async Task CheckForUpdatesAndPromptAsync(bool isLite, Window? owner, bool isStartup = false)
         {
+            // Evita disparar verificações simultâneas
+            if (Interlocked.CompareExchange(ref _isChecking, 1, 0) != 0)
+                return;
+
             try
             {
-                // Pequena pausa para a janela principal renderizar completamente
-                await Task.Delay(2000);
+                // Se já exibiu o pop-up de atualização nesta sessão do aplicativo e o usuário optou por não atualizar agora,
+                // não incomoda novamente a cada novo arquivo aberto na mesma sessão.
+                if (_hasPromptedThisSession)
+                    return;
+
+                // Breve pausa para dar tempo da interface renderizar a janela ou a primeira página do documento
+                await Task.Delay(isStartup ? 800 : 500);
 
                 var result = await CheckForUpdatesAsync(isLite);
                 if (result.HasUpdate && !string.IsNullOrEmpty(result.DownloadUrl))
                 {
+                    _hasPromptedThisSession = true;
+
                     if (owner != null)
                     {
                         await owner.Dispatcher.InvokeAsync(async () =>
                         {
+                            string appName = isLite ? "FT PDF Lite" : "FT PDF";
                             var resp = MessageBox.Show(owner,
-                                $"Uma nova versão do FT PDF Lite (v{result.LatestVersion}) está disponível!\n\nDeseja atualizar agora? O aplicativo fará o download e substituirá a versão antiga automaticamente.",
-                                "Atualização Disponível",
+                                $"🚀 Uma nova versão do {appName} (v{result.LatestVersion}) está disponível!\n\n" +
+                                $"Versão atual: v{result.CurrentVersion}\n" +
+                                $"Nova versão: v{result.LatestVersion}\n\n" +
+                                "Deseja atualizar agora? O aplicativo fará o download e atualizará automaticamente.",
+                                $"Atualização Disponível - {appName}",
                                 MessageBoxButton.YesNo,
-                                MessageBoxImage.Question);
+                                MessageBoxImage.Information);
 
                             if (resp == MessageBoxResult.Yes)
                             {
@@ -193,10 +238,18 @@ del ""%~f0""
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Silencioso na inicialização para não incomodar o usuário
+                Debug.WriteLine($"[UpdateService] Erro na checagem automática: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isChecking, 0);
             }
         }
+
+        public static Task AutoCheckOnStartupAsync(bool isLite, Window? owner) =>
+            CheckForUpdatesAndPromptAsync(isLite, owner, isStartup: true);
     }
 }
+

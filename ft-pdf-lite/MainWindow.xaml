@@ -32,8 +32,9 @@
     </Window.InputBindings>
 
     <!-- Outer Root Border for rounded corners when window is normal size (medium) -->
-    <Border x:Name="WindowRootBorder" Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="10">
-        <Grid Background="#0F172A">
+    <Border x:Name="WindowRootBorder" Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="10"
+            HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Grid Background="#0F172A" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
             <Grid.RowDefinitions>
                 <!-- Integrated Custom Titlebar with Tabs (Height: 44) -->
                 <RowDefinition Height="44" />

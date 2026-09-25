@@ -80,6 +80,7 @@ namespace FtPdfLite
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
         private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWCP_DONOTROUND = 1;
         private const int DWMWCP_ROUND = 2;
 
         private const int WM_GETMINMAXINFO = 0x0024;
@@ -126,7 +127,6 @@ namespace FtPdfLite
         public MainWindow()
         {
             InitializeComponent();
-            AdjustWindowToScreen();
             StateChanged += MainWindow_StateChanged;
             SizeChanged += (s, e) => UpdateTabsBar();
             PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -164,7 +164,9 @@ namespace FtPdfLite
             if (msg == WM_GETMINMAXINFO)
             {
                 WmGetMinMaxInfo(hwnd, lParam);
-                handled = true;
+                // Não marcar handled = true para que o WindowChromeWorker nativo do WPF
+                // consiga processar o ajuste de bordas da área de cliente sem gerar bordas pretas!
+                handled = false;
             }
             return IntPtr.Zero;
         }
@@ -178,10 +180,14 @@ namespace FtPdfLite
                 var mi = new MONITORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
                 if (GetMonitorInfo(monitor, ref mi))
                 {
-                    mmi.ptMaxPosition.x = Math.Abs(mi.rcWork.Left - mi.rcMonitor.Left);
-                    mmi.ptMaxPosition.y = Math.Abs(mi.rcWork.Top - mi.rcMonitor.Top);
-                    mmi.ptMaxSize.x = Math.Abs(mi.rcWork.Right - mi.rcWork.Left);
-                    mmi.ptMaxSize.y = Math.Abs(mi.rcWork.Bottom - mi.rcWork.Top);
+                    int workW = Math.Abs(mi.rcWork.Right - mi.rcWork.Left);
+                    int workH = Math.Abs(mi.rcWork.Bottom - mi.rcWork.Top);
+                    mmi.ptMaxPosition.x = mi.rcWork.Left - mi.rcMonitor.Left;
+                    mmi.ptMaxPosition.y = mi.rcWork.Top - mi.rcMonitor.Top;
+                    mmi.ptMaxSize.x = workW;
+                    mmi.ptMaxSize.y = workH;
+                    mmi.ptMaxTrackSize.x = workW;
+                    mmi.ptMaxTrackSize.y = workH;
                     mmi.ptMinTrackSize.x = 760;
                     mmi.ptMinTrackSize.y = 450;
                 }
@@ -196,8 +202,9 @@ namespace FtPdfLite
                 var workArea = SystemParameters.WorkArea;
                 if (workArea.Width <= 0 || workArea.Height <= 0) return;
 
-                MaxWidth = workArea.Width;
-                MaxHeight = workArea.Height;
+                // Não restringir MaxWidth/MaxHeight da Window para não travar o layout ao maximizar
+                ClearValue(MaxWidthProperty);
+                ClearValue(MaxHeightProperty);
 
                 if (workArea.Width <= 1366 || workArea.Height <= 768)
                 {
@@ -319,6 +326,17 @@ namespace FtPdfLite
             {
                 TitleBarBorder.CornerRadius = isMaximized ? new CornerRadius(0) : new CornerRadius(9, 9, 0, 0);
             }
+
+            try
+            {
+                var helper = new System.Windows.Interop.WindowInteropHelper(this);
+                if (helper.Handle != IntPtr.Zero)
+                {
+                    int preference = isMaximized ? DWMWCP_DONOTROUND : DWMWCP_ROUND;
+                    DwmSetWindowAttribute(helper.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref preference, sizeof(int));
+                }
+            }
+            catch { }
         }
 
 
@@ -572,6 +590,9 @@ namespace FtPdfLite
             {
                 if (string.IsNullOrWhiteSpace(filePath))
                     return;
+
+                // Verifica se há novas versões disponíveis ao abrir um arquivo para leitura
+                _ = UpdateService.CheckForUpdatesAndPromptAsync(isLite: true, this, isStartup: false);
 
                 try { filePath = Path.GetFullPath(filePath); } catch { }
 
