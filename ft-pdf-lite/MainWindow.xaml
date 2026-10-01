@@ -533,11 +533,16 @@
 
                     <!-- Import Verdict Banner -->
                     <Border Grid.Row="1" x:Name="BorderImportVerdict" Background="#1E3A2F" BorderBrush="#10B981" BorderThickness="1.5" 
-                            CornerRadius="8" Padding="12,8" Margin="0,0,0,8">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock x:Name="TxtImportVerdictIcon" Text="✅" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center" />
-                            <TextBlock x:Name="TxtImportVerdict" Text="O arquivo importa" 
-                                       FontSize="13" FontWeight="Bold" Foreground="#34D399" VerticalAlignment="Center" />
+                            CornerRadius="8" Padding="12,9" Margin="0,0,0,8">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtImportVerdictIcon" Text="✅" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TxtImportVerdict" Text="DOCUMENTO IMPORTÁVEL" 
+                                           FontSize="12.5" FontWeight="Bold" Foreground="#34D399" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <TextBlock x:Name="TxtRetaguardaNotice" 
+                                       Text="Atenção: caso mesmo como importável ele não importe, envie para a retaguarda." 
+                                       FontSize="10.5" Foreground="#94A3B8" FontStyle="Italic" Margin="22,3,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
 

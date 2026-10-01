@@ -1539,29 +1539,35 @@ namespace FtPdfLite
             }
 
             TxtImportVerdict.Text = report.ImportVerdict;
-            if (report.ImportVerdict == "O arquivo importa")
+            if (report.ImportVerdict.StartsWith("DOCUMENTO IMPORTÁVEL", StringComparison.OrdinalIgnoreCase) &&
+                !report.ImportVerdict.Contains("FALHAS", StringComparison.OrdinalIgnoreCase))
             {
                 TxtImportVerdictIcon.Text = "✅";
                 BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E3A2F"));
                 BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#10B981"));
                 TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#34D399"));
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A7F3D0"));
+                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
             }
-            else if (report.ImportVerdict.StartsWith("Atenção") ||
-                     report.ImportVerdict.Contains("pode importar com falha") ||
-                     report.ImportVerdict.Contains("pode importar com erros"))
+            else if (report.ImportVerdict.Contains("FALHAS", StringComparison.OrdinalIgnoreCase) ||
+                     report.ImportVerdict.StartsWith("Atenção", StringComparison.OrdinalIgnoreCase))
             {
                 TxtImportVerdictIcon.Text = "⚠️";
-                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3D3215"));
-                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
-                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
-            }
-            else if (report.ImportVerdict.Contains("grandes chances", StringComparison.OrdinalIgnoreCase) ||
-                     report.ImportVerdict.Contains("Grandes chances"))
-            {
-                TxtImportVerdictIcon.Text = "⚠️";
-                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E2619"));
-                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F97316"));
-                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDBA74"));
+                if (report.HasMissingNegativeAmountsInImages || report.IntegrityScore < 40)
+                {
+                    BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E2619"));
+                    BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F97316"));
+                    TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDBA74"));
+                    TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FED7AA"));
+                }
+                else
+                {
+                    BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3D3215"));
+                    BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
+                    TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
+                    TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE68A"));
+                }
+                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
             }
             else
             {
@@ -1569,11 +1575,22 @@ namespace FtPdfLite
                 BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E1C1E"));
                 BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
                 TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCA5A5"));
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FECACA"));
+                TxtRetaguardaNotice.Text = "Atenção: documento com bloqueio de importação. Envie para a retaguarda.";
             }
 
             TxtDiagFormatting.Text = $"Formatação: {report.FormattingQuality}";
             TxtDiagStrangeChars.Text = $"Sinais Estranhos: {report.StrangeCharactersCount}";
-            TxtDiagImages.Text = $"Imagens / Scans: {report.TotalImagesFound} ({report.ScannedPagesCount} pág. scan)";
+            if (report.HasMissingNegativeAmountsInImages)
+            {
+                TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0} (⚠️ valores em figura)";
+                TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+            }
+            else
+            {
+                TxtDiagImages.Text = $"Imagens / Scans: {report.TotalImagesFound} ({report.ScannedPagesCount} pág. scan)";
+                TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0"));
+            }
             TxtDiagCharCount.Text = $"Total Caracteres: {report.TotalCharacters:N0}";
 
             TxtPropFileSize.Text = props.FileSize;
@@ -1587,10 +1604,23 @@ namespace FtPdfLite
             if (report.DiagnosticWarnings.Count > 0)
             {
                 TxtDiagWarning.Text = string.Join(" • ", report.DiagnosticWarnings);
+                if (report.HasMissingNegativeAmountsInImages)
+                {
+                    TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCA5A5"));
+                }
+                else if (report.IntegrityScore < 70)
+                {
+                    TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
+                }
+                else
+                {
+                    TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
+                }
             }
             else
             {
                 TxtDiagWarning.Text = "Texto bem estruturado e sem anomalias detectadas.";
+                TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
             }
 
             UpdateEditorStats();

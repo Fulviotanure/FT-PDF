@@ -1,4 +1,4 @@
-name: Release FT PDF Lite
+name: Release FT PDF Lite (Arquivo Único)
 
 permissions:
   contents: write
@@ -6,14 +6,14 @@ permissions:
 on:
   push:
     tags:
+      - 'v*'
       - 'lite-v*'
-      - 'v*-lite'
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Tag de versão do release Lite (ex: lite-v2.1.0)'
+        description: 'Tag de versão do release (ex: v2.4.2)'
         required: false
-        default: 'lite-v2.1.0'
+        default: 'v2.4.2'
 
 jobs:
   build-and-release-lite:
@@ -34,14 +34,14 @@ jobs:
     - name: Build FT PDF Lite
       run: dotnet build ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 --no-restore
 
-    - name: Publish FT PDF Lite (Standalone SingleFile)
+    - name: Publish FT PDF Lite (Arquivo Único - Standalone SingleFile)
       run: |
         dotnet publish ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o ./publish-ft-pdf-lite
 
     - name: Package Release ZIP
       shell: pwsh
       run: |
-        Compress-Archive -Path ./publish-ft-pdf-lite/* -DestinationPath ./FT-PDF-Lite-Windows-x64.zip -Force
+        Compress-Archive -Path ./publish-ft-pdf-lite/FtPdfLite.exe -DestinationPath ./FT-PDF-Lite-Windows-x64.zip -Force
 
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
@@ -54,19 +54,18 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name || inputs.version_tag }}
-        name: "FT PDF Lite ${{ github.ref_name || inputs.version_tag }} (Edição Ultraleve)"
+        name: "FT PDF Lite ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)"
         body: |
-          ### ⚡ Release FT PDF Lite - ${{ github.ref_name || inputs.version_tag }} (Edição Ultraleve)
+          ### ⚡ Lançamento Oficial FT PDF Lite - ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)
           
-          - **Leitor de PDF Vetorial Nativo** (Aceleração por Hardware)
-          - **Múltiplas Abas Integradas** com suporte a senhas em documentos protegidos
-          - **Ajuste Inteligente de Tela:** Adaptação automática para diferentes resoluções e monitores sem corte de interface ou botões
-          - **🔍 Validação e Diagnóstico de Integridade**
-          - **📝 Bloco de Notas Integrado (Layout e Texto Cru)**
-          - **Zero Ferramentas de Edição** (Focado exclusivamente em visualização rápida e segura)
-          - **Fix Crítico de Inicialização:** Biblioteca nativa PDFium integrada e auto-extraível diretamente dentro do executável único
+          - **Executável Único (.exe):** 100% Standalone Self-Contained, zero dependência de .NET instalado.
+          - **PDFium Nativo Embutido:** Inicialização instantânea com aceleração de hardware.
+          - **Leitura Vetorial de Alta Fidelidade:** Múltiplas abas, suporte a senhas e ajuste automático de tela.
+          - **🔍 Validação e Diagnóstico de Integridade:** Classificação padronizada (`DOCUMENTO IMPORTÁVEL`, `DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS`, `DOCUMENTO NÃO IMPORTÁVEL`) e detecção de microimagens/lançamentos em figura.
+          - **📝 Bloco de Notas Integrado:** Extração limpa em texto cru e layout preservado.
+          - **Diretriz de Retaguarda:** Procedimento padronizado integrado no diagnóstico.
           
-          Baixe o executável abaixo para usar imediatamente!
+          Baixe o arquivo executável único abaixo (`FtPdfLite.exe`) e execute diretamente com 2 cliques!
         files: |
           ./publish-ft-pdf-lite/FtPdfLite.exe
           ./FT-PDF-Lite-Windows-x64.zip

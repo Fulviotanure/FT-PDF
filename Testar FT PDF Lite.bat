@@ -1,6 +1,6 @@
 @echo off
 title FT PDF Lite - Teste dos Arquivos Brutos (.NET 10)
-set "PATH=C:\Users\Fulvio\AppData\Local\Microsoft\dotnet;%PATH%"
+set "PATH=C:\Program Files\dotnet;C:\Users\Fulvio\AppData\Local\Microsoft\dotnet;%PATH%"
 
 taskkill /F /IM FtPdfLite.exe 2>nul
 

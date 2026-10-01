@@ -3,10 +3,10 @@ chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 echo =============================================================
-echo        COMPILADOR LOCAL FT PDF (Zero Dependência .NET)
+echo        COMPILADOR LOCAL FT PDF LITE (Zero Dependência .NET)
 echo =============================================================
 echo.
-set /p VER="Digite a versão para compilar (ex: v2.1.0 ou 2.1.0): "
+set /p VER="Digite a versão para compilar (ex: v2.4.2 ou 2.4.2): "
 if "%VER%"=="" (
     echo [ERRO] Versão não informada.
     pause
@@ -20,20 +20,11 @@ if not "%VER:~0,1%"=="v" (
 
 set "OUTDIR=compilacoes\%VER%"
 echo.
-echo [1/3] Criando pasta de destino: %OUTDIR%
+echo [1/2] Criando pasta de destino: %OUTDIR%
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 echo.
-echo [2/3] Compilando FT PDF (Edição Completa) - SingleFile Self-Contained...
-dotnet publish _projetos_futuros/ft-pdf/FtPdf.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
-if errorlevel 1 (
-    echo [ERRO] Falha ao compilar FT PDF.
-    pause
-    exit /b 1
-)
-
-echo.
-echo [3/3] Compilando FT PDF Lite (Edição Ultraleve) - SingleFile Self-Contained...
+echo [2/2] Compilando FT PDF Lite (Arquivo Único - Standalone Self-Contained)...
 dotnet publish ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
 if errorlevel 1 (
     echo [ERRO] Falha ao compilar FT PDF Lite.
@@ -43,8 +34,7 @@ if errorlevel 1 (
 
 echo.
 echo =============================================================
-echo 🎉 SUCESSO! Executáveis gerados com sucesso em:
-echo    %OUTDIR%\FtPdf.exe
+echo 🎉 SUCESSO! Executável único gerado com sucesso em:
 echo    %OUTDIR%\FtPdfLite.exe
 echo.
 echo Agora você pode testar diretamente na pasta 'compilacoes\%VER%\'!

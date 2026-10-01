@@ -1,48 +1,67 @@
-# FT PDF Suite
+# FT PDF Lite (Arquivo Único)
 
-Repositório unificado contendo as duas edições oficiais do **FT PDF** desenvolvidas em **C# (.NET 10 WPF)**:
+Leitor, Validador de Integridade e Extrator de Documentos PDF ultraleve desenvolvido em **C# (.NET 10 WPF)**, distribuído como **executável único standalone (Single-File Self-Contained)** sem necessidade de instalação prévia do .NET.
 
 ---
 
-## 📁 Estrutura do Projeto
+## ⚡ Principais Características
+
+- **Executável Único (Standalone):** Roda direto com dois cliques (`FtPdfLite.exe`), sem necessidade de instalar runtimes do .NET.
+- **Motor PDFium Integrado:** Renderização nativa de alta fidelidade e aceleração gráfica.
+- **🔍 Diagnóstico de Integridade e Validação:**
+  - Classificação visual padronizada:
+    - 🟢 `DOCUMENTO IMPORTÁVEL` (PDF com texto vetorial íntegro e legível).
+    - 🟡 `DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS` (Alerta para microimagens de valores negativos ou possíveis falhas de leitura).
+    - 🔴 `DOCUMENTO NÃO IMPORTÁVEL` (Documento digitalizado/rasterizado sem camada de texto).
+  - Banner informativo padrão: *"Atenção: caso mesmo como importável ele não importe, envie para a retaguarda."*
+- **Visualizador Moderno Multiabas:** Suporte a abas simultâneas, zoom suave, arrastar e soltar (drag & drop) e PDFs protegidos por senha.
+- **Bloco de Notas Integrado:** Extração instantânea de texto preservando layout ou texto puro.
+
+---
+
+## 📁 Estrutura do Repositório
 
 ```text
-ft-pdf/
-├── FtPdf.slnx                       # Solution unificada (.NET 10)
-├── ft-pdf/                          # Edição Completa (Leitura, Validação e Ferramentas de Edição)
-│   ├── FtPdf.csproj
-│   ├── App.xaml / App.xaml.cs
-│   ├── MainWindow.xaml / .cs
-│   ├── Dialogs/
-│   ├── Services/
-│   ├── Models/
-│   └── Assets/
-├── ft-pdf-lite/                     # Edição Ultraleve (Leitura e Validação, sem ferramentas de edição)
+FT-PDF/
+├── FtPdf.slnx                       # Solution (.NET 10)
+├── ft-pdf-lite/                     # Código-fonte do FT PDF Lite
 │   ├── FtPdfLite.csproj
 │   ├── App.xaml / App.xaml.cs
 │   ├── MainWindow.xaml / .cs
 │   ├── SettingsWindow.xaml / .cs
-│   ├── Services/
-│   ├── Models/
-│   ├── installer/
-│   └── Assets/
-├── Iniciar FT PDF.bat               # Inicializador rápido da edição completa
-├── Iniciar FT PDF Lite.bat          # Inicializador rápido da edição lite
+│   ├── Services/                    # Extração, diagnóstico e integração PDFium
+│   ├── Models/                      # Modelos de dados e diagnóstico
+│   ├── Native/                      # pdfium.dll embutida como recurso
+│   └── Assets/                      # Ícones e logotipos
+├── Testar FT PDF Lite.bat           # Executa direto os arquivos brutos para testes
+├── compilar_local.bat               # Compilação local em Single-File na pasta compilacoes/
+├── publicar_versao.bat              # Script interativo para gerar tag e acionar GitHub Actions
 └── .github/workflows/
-    ├── release-ft-pdf.yml           # CI/CD & Releases da Edição Completa
-    └── release-ft-pdf-lite.yml      # CI/CD & Releases da Edição Lite
+    └── release-ft-pdf-lite.yml      # CI/CD automatizado no GitHub Actions (Single-File)
 ```
 
 ---
 
-## 🚀 Como Acionar os Releases no GitHub Actions
+## 🛠️ Como Testar e Compilar
 
-### 1. Release do FT PDF (Edição Completa)
-- **Tag:** `v2.0.0`, `v2.1.0` (ou qualquer tag `vX.Y.Z` ou `ft-pdf-v*`)
-- **Manual:** Na aba **Actions** do GitHub, selecione o workflow **"Release FT PDF"** > **Run workflow**.
-- **Artefatos:** `FtPdf.exe` e `FT-PDF-Windows-x64.zip`.
+### 1. Testar Arquivos Brutos (Desenvolvimento)
+Execute o script:
+```cmd
+Testar FT PDF Lite.bat
+```
+Ele executa via `dotnet run` diretamente o código fonte atual, permitindo validações imediatas sem compilar.
 
-### 2. Release do FT PDF Lite (Edição Ultraleve)
-- **Tag:** `lite-v2.0.0`, `v2.0.0-lite` (ou qualquer tag `lite-v*` ou `v*-lite`)
-- **Manual:** Na aba **Actions** do GitHub, selecione o workflow **"Release FT PDF Lite"** > **Run workflow**.
-- **Artefatos:** `FtPdfLite.exe` e `FT-PDF-Lite-Windows-x64.zip`.
+### 2. Compilar Executável Localmente
+Execute:
+```cmd
+compilar_local.bat
+```
+Informe a versão desejada (ex: `2.4.2`). O executável standalone será criado em:
+`compilacoes/v2.4.2/FtPdfLite.exe`
+
+### 3. Lançamento Oficial (GitHub Actions)
+Execute:
+```cmd
+publicar_versao.bat
+```
+Após confirmação, a tag Git será criada e enviada ao GitHub, disparando o workflow do GitHub Actions que compilará e anexará o executável único (`FtPdfLite.exe`) e o arquivo ZIP na aba **Releases**.

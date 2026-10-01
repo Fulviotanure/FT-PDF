@@ -30,7 +30,7 @@ namespace FtPdfLite.Services
         public double IntegrityScore { get; set; } = 100.0;
         public string IntegrityStatus { get; set; } = "Alta Integridade";
         public string DocumentType { get; set; } = "Texto Vetorial Nativo";
-        public string ImportVerdict { get; set; } = "O arquivo importa";
+        public string ImportVerdict { get; set; } = "DOCUMENTO IMPORTÁVEL";
         public string ImportVerdictColor { get; set; } = "#10B981"; // Green
         public int TotalCharacters { get; set; }
         public int TotalWords { get; set; }
@@ -39,6 +39,10 @@ namespace FtPdfLite.Services
         public List<string> StrangeCharactersSamples { get; set; } = new();
         public int ScannedPagesCount { get; set; }
         public int TotalImagesFound { get; set; }
+        public int SmallInlineImagesCount { get; set; }
+        public bool HasMissingNegativeAmountsInImages { get; set; }
+        public int MissingDebitLinesCount { get; set; }
+        public List<string> MissingDebitLineSamples { get; set; } = new();
         public string FormattingQuality { get; set; } = "Bem Formatado";
         public List<string> DiagnosticWarnings { get; set; } = new();
     }
@@ -75,6 +79,23 @@ namespace FtPdfLite.Services
             "credit", "debit", "balance", "customer", "client", "number", "the", "and", "for", "with", "from"
         };
 
+        private static readonly Regex CurrencyRegex = new(@"R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}|\b\d{1,3}(?:\.\d{3})*,\d{2}\b", RegexOptions.Compiled);
+        private static readonly Regex NegativeCurrencyRegex = new(@"(?:-\s*R\$|R\$\s*[-–—]|[-–—]\s*R\$\s*\d|\(\s*R\$\s*\d|\(\s*\d{1,3}(?:\.\d{3})*,\d{2}\s*\)|-\s*\d{1,3}(?:\.\d{3})*,\d{2}\b)", RegexOptions.Compiled);
+
+        private static readonly string[] FinancialStatementKeywords = new[]
+        {
+            "extrato", "saldo", "banco", "tarifa", "cobrança", "cobranca", "saída", "saida", "entrada",
+            "pix", "maquininha", "stone", "pagamento", "transferência", "transferencia", "ted", "doc",
+            "débito", "debito", "crédito", "credito", "instituição de pagamento", "instituicao de pagamento",
+            "conta corrente", "conta de pagamento", "reserva stone"
+        };
+
+        private static readonly string[] DebitOrFeeKeywords = new[]
+        {
+            "tarifa", "cobrança de tarifa", "cobranca de tarifa", "tarifa de", "taxa pix", "taxa maquininha",
+            "taxa", "débito", "debito", "saída", "saida", "estorno", "iof", "anuidade", "encargos"
+        };
+
         public ExtractionResult ExtractAndAnalyze(string filePath, string? password = null)
         {
             var result = new ExtractionResult();
@@ -86,7 +107,7 @@ namespace FtPdfLite.Services
                 report.IntegrityScore = 0;
                 report.IntegrityStatus = "Arquivo não encontrado";
                 report.DocumentType = "Arquivo Inacessível";
-                report.ImportVerdict = "Arquivo não importável";
+                report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                 report.ImportVerdictColor = "#EF4444";
                 report.DiagnosticWarnings.Add("O arquivo PDF especificado não existe.");
                 return result;
@@ -110,6 +131,12 @@ namespace FtPdfLite.Services
             int recognizedWordHits = 0;
             int scannedPages = 0;
             int totalImages = 0;
+            int totalSmallInlineImages = 0;
+            int debitLinesWithSingleAmountCount = 0;
+            int normalTransactionLinesWithTwoAmountsCount = 0;
+            int negativeAmountsInTextCount = 0;
+            int financialTermHits = 0;
+            var sampleMissingDebitLines = new List<string>();
             int brokenLineCount = 0;
             int totalLines = 0;
 
@@ -143,6 +170,15 @@ namespace FtPdfLite.Services
                     var letters = page.Letters.ToList();
                     var images = page.GetImages().ToList();
                     totalImages += images.Count;
+
+                    // Count small inline images typical of rendered text/badges/icons
+                    foreach (var img in images)
+                    {
+                        if (img.Bounds.Height <= 45 && img.Bounds.Width <= 350 && img.Bounds.Height >= 2 && img.Bounds.Width >= 4)
+                        {
+                            totalSmallInlineImages++;
+                        }
+                    }
 
                     // Get dimensions of first page
                     if (i == 1)
@@ -230,12 +266,60 @@ namespace FtPdfLite.Services
                         {
                             brokenLineCount++;
                         }
+
+                        if (trimmed.Length == 0) continue;
+
+                        // Check financial keywords
+                        for (int k = 0; k < FinancialStatementKeywords.Length; k++)
+                        {
+                            if (trimmed.IndexOf(FinancialStatementKeywords[k], StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                financialTermHits++;
+                            }
+                        }
+
+                        // Check negative amounts
+                        if (NegativeCurrencyRegex.IsMatch(trimmed))
+                        {
+                            negativeAmountsInTextCount++;
+                        }
+
+                        // Check transaction line amounts
+                        var currencyMatches = CurrencyRegex.Matches(trimmed);
+                        if (currencyMatches.Count >= 2)
+                        {
+                            normalTransactionLinesWithTwoAmountsCount++;
+                        }
+                        else if (currencyMatches.Count == 1)
+                        {
+                            bool hasDebitWord = false;
+                            for (int d = 0; d < DebitOrFeeKeywords.Length; d++)
+                            {
+                                if (trimmed.IndexOf(DebitOrFeeKeywords[d], StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    hasDebitWord = true;
+                                    break;
+                                }
+                            }
+
+                            if (hasDebitWord)
+                            {
+                                debitLinesWithSingleAmountCount++;
+                                if (sampleMissingDebitLines.Count < 3)
+                                {
+                                    sampleMissingDebitLines.Add(trimmed);
+                                }
+                            }
+                        }
                     }
                 }
 
                 report.TotalCharacters = totalLetters;
                 report.TotalWords = totalWords;
                 report.TotalImagesFound = totalImages;
+                report.SmallInlineImagesCount = totalSmallInlineImages;
+                report.MissingDebitLinesCount = debitLinesWithSingleAmountCount;
+                report.MissingDebitLineSamples = sampleMissingDebitLines;
                 report.ScannedPagesCount = scannedPages;
                 report.StrangeCharactersCount = strangeChars;
                 report.StrangeCharactersSamples = strangeCharSet.Select(c => $"'{c}' (U+{(int)c:X4})").ToList();
@@ -279,6 +363,49 @@ namespace FtPdfLite.Services
                     }
                 }
 
+                // 3. Check for Financial Statement with Missing Negative Amounts / Debits Embedded as Images
+                string rawTextSample = rawBuilder.Length > 8000 ? rawBuilder.ToString(0, 8000) : rawBuilder.ToString();
+                bool isFinancialDoc = financialTermHits >= 3 || 
+                                     rawTextSample.Contains("extrato", StringComparison.OrdinalIgnoreCase) ||
+                                     rawTextSample.Contains("saldo", StringComparison.OrdinalIgnoreCase) ||
+                                     rawTextSample.Contains("Stone", StringComparison.OrdinalIgnoreCase) ||
+                                     rawTextSample.Contains("Instituição de Pagamento", StringComparison.OrdinalIgnoreCase) ||
+                                     rawTextSample.Contains("Instituicao de Pagamento", StringComparison.OrdinalIgnoreCase);
+
+                bool hasAnomalousImagesInVector = !isScannedDocument && totalLetters > 200 && (
+                    (totalImages >= 20 && ((double)totalImages / Math.Max(1, report.TotalPages)) >= 2.0) ||
+                    totalSmallInlineImages >= 10 ||
+                    totalImages >= 50
+                );
+
+                bool isWebPrintDriver = props.Producer.Contains("Print To PDF", StringComparison.OrdinalIgnoreCase) ||
+                                        props.Creator.Contains("Print To PDF", StringComparison.OrdinalIgnoreCase) ||
+                                        props.Producer.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
+                                        props.Creator.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
+                                        props.Producer.Contains("Edge", StringComparison.OrdinalIgnoreCase) ||
+                                        props.Creator.Contains("Edge", StringComparison.OrdinalIgnoreCase);
+
+                bool hasMissingNegativeAmounts = false;
+
+                if (isFinancialDoc && hasAnomalousImagesInVector)
+                {
+                    if (debitLinesWithSingleAmountCount >= 2 || (negativeAmountsInTextCount == 0 && (financialTermHits >= 10 || totalImages >= 25)))
+                    {
+                        hasMissingNegativeAmounts = true;
+                    }
+                }
+                else if (isFinancialDoc && isWebPrintDriver && totalImages >= 5)
+                {
+                    if (debitLinesWithSingleAmountCount >= 1 || negativeAmountsInTextCount == 0)
+                    {
+                        hasMissingNegativeAmounts = true;
+                    }
+                }
+                else if (isFinancialDoc && debitLinesWithSingleAmountCount >= 5 && normalTransactionLinesWithTwoAmountsCount >= 5 && totalImages >= debitLinesWithSingleAmountCount)
+                {
+                    hasMissingNegativeAmounts = true;
+                }
+
                 // Evaluate Score & Verdict
                 if (isScannedDocument)
                 {
@@ -286,7 +413,7 @@ namespace FtPdfLite.Services
                     report.IntegrityStatus = "0% - Não Legível";
                     report.DocumentType = "Documento Escaneado (Imagem)";
                     report.FormattingQuality = "Sem Texto Vetorial (Imagem)";
-                    report.ImportVerdict = "Arquivo não importável";
+                    report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                     report.ImportVerdictColor = "#EF4444"; // Red
                     report.DiagnosticWarnings.Add("Documento composto por imagens escaneadas sem camada de texto digital (necessita OCR).");
                 }
@@ -296,7 +423,7 @@ namespace FtPdfLite.Services
                     report.IntegrityStatus = "0% - Ilegível";
                     report.DocumentType = "Documento Criptografado ou Codificação Quebrada";
                     report.FormattingQuality = "Texto Quebrado / Embaralhado";
-                    report.ImportVerdict = "Arquivo não importável";
+                    report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                     report.ImportVerdictColor = "#EF4444"; // Red
                     report.DiagnosticWarnings.Add("Fontes com codificação embutida sem mapeamento ToUnicode (letras/sinais embaralhados e não decodificáveis).");
                     if (strangeChars > 0)
@@ -314,9 +441,28 @@ namespace FtPdfLite.Services
                     report.IntegrityStatus = "0% - Vazio";
                     report.DocumentType = "PDF Sem Informações de Texto";
                     report.FormattingQuality = "Vazio";
-                    report.ImportVerdict = "Arquivo não importável";
+                    report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                     report.ImportVerdictColor = "#EF4444";
                     report.DiagnosticWarnings.Add("Nenhum caractere de texto legível foi encontrado no arquivo.");
+                }
+                else if (hasMissingNegativeAmounts)
+                {
+                    report.IntegrityScore = 25.0;
+                    report.HasMissingNegativeAmountsInImages = true;
+                    report.IntegrityStatus = "25% - Lançamentos em Imagem (Incompleto)";
+                    report.DocumentType = "Extrato Híbrido (Valores em Imagem)";
+                    report.FormattingQuality = "Valores Negativos Ocultos em Imagens";
+                    report.ImportVerdict = "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS";
+                    report.ImportVerdictColor = "#EF4444"; // Red
+
+                    double avgPerPg = report.TotalPages > 0 ? (double)totalImages / report.TotalPages : 0;
+                    report.DiagnosticWarnings.Insert(0, $"Atenção Crítica: Detectadas {totalImages:N0} imagens embutidas ({avgPerPg:0.1} por página). Valores negativos e tarifas foram gerados como figuras (imagens) e NÃO constam na camada de texto.");
+                    report.DiagnosticWarnings.Insert(1, "Risco na Importação: O sistema contábil NÃO importará essas tarifas/débitos, gerando conciliação incompleta e lançamentos faltantes.");
+                    if (sampleMissingDebitLines.Count > 0)
+                    {
+                        report.DiagnosticWarnings.Insert(2, $"Exemplo de linha com valor ausente no texto: \"{sampleMissingDebitLines[0]}\" (tarifa sem o valor do débito).");
+                    }
+                    report.DiagnosticWarnings.Add("Solução recomendada: Baixar o extrato original em OFX ou Excel (XLSX) diretamente do internet banking, ou gerar o PDF nativo do banco sem usar 'Imprimir para PDF' do navegador.");
                 }
                 else
                 {
@@ -378,14 +524,14 @@ namespace FtPdfLite.Services
                     {
                         report.IntegrityStatus = "100% - Integridade Perfeita";
                         report.DocumentType = "Texto Vetorial Nativo";
-                        report.ImportVerdict = "O arquivo importa";
+                        report.ImportVerdict = "DOCUMENTO IMPORTÁVEL";
                         report.ImportVerdictColor = "#10B981"; // Green
                     }
                     else if (score >= 70.0)
                     {
                         report.IntegrityStatus = "Atenção - Abaixo de 100%";
                         report.DocumentType = "Texto com Pequenas Discrepâncias";
-                        report.ImportVerdict = "Atenção: o arquivo pode importar com erros";
+                        report.ImportVerdict = "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS";
                         report.ImportVerdictColor = "#F59E0B"; // Yellow/Orange
                         report.DiagnosticWarnings.Insert(0, "Atenção: integridade abaixo de 100% - o documento pode importar com erros ou falhas.");
                     }
@@ -393,7 +539,7 @@ namespace FtPdfLite.Services
                     {
                         report.IntegrityStatus = "Baixa Integridade";
                         report.DocumentType = "Texto com Ruído / Itens Faltantes";
-                        report.ImportVerdict = "Atenção: grandes chances de erro na importação";
+                        report.ImportVerdict = "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS";
                         report.ImportVerdictColor = "#F97316"; // Orange
                         report.DiagnosticWarnings.Insert(0, "Atenção: baixa integridade estrutural - o arquivo pode importar com erros ou partes truncadas.");
                     }
@@ -401,7 +547,7 @@ namespace FtPdfLite.Services
                     {
                         report.IntegrityStatus = "Integridade Crítica";
                         report.DocumentType = "Texto Severamente Danificado";
-                        report.ImportVerdict = "Arquivo não importável";
+                        report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                         report.ImportVerdictColor = "#EF4444"; // Red
                     }
                 }
@@ -416,7 +562,7 @@ namespace FtPdfLite.Services
                 report.IntegrityScore = 0.0;
                 report.IntegrityStatus = "0% - Protegido / Erro";
                 report.DocumentType = !string.IsNullOrEmpty(password) ? "Documento Protegido por Senha" : "Arquivo Corrompido / Ilegível";
-                report.ImportVerdict = !string.IsNullOrEmpty(password) ? "Visualização ativa via Pdfium" : "Arquivo não importável";
+                report.ImportVerdict = !string.IsNullOrEmpty(password) ? "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS" : "DOCUMENTO NÃO IMPORTÁVEL";
                 report.ImportVerdictColor = !string.IsNullOrEmpty(password) ? "#3B82F6" : "#EF4444";
                 report.DiagnosticWarnings.Add($"Aviso de extração de texto via PdfPig: {ex.Message}");
                 result.FormattedText = !string.IsNullOrEmpty(password) 
