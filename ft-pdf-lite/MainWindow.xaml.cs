@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
@@ -57,6 +58,28 @@ namespace FtPdfLite
         public string FilePath { get; set; } = string.Empty;
         public MainWindow? SourceWindow { get; set; }
         public bool HandledByTargetWindow { get; set; } = false;
+    }
+
+    public class DarkMenuRenderer : System.Windows.Forms.ToolStripProfessionalRenderer
+    {
+        public DarkMenuRenderer() : base(new DarkMenuColorTable()) { }
+    }
+
+    public class DarkMenuColorTable : System.Windows.Forms.ProfessionalColorTable
+    {
+        public override System.Drawing.Color ToolStripDropDownBackground => System.Drawing.Color.FromArgb(15, 23, 42); // #0F172A
+        public override System.Drawing.Color ImageMarginGradientBegin => System.Drawing.Color.FromArgb(15, 23, 42);
+        public override System.Drawing.Color ImageMarginGradientMiddle => System.Drawing.Color.FromArgb(15, 23, 42);
+        public override System.Drawing.Color ImageMarginGradientEnd => System.Drawing.Color.FromArgb(15, 23, 42);
+        public override System.Drawing.Color MenuBorder => System.Drawing.Color.FromArgb(51, 65, 85); // #334155
+        public override System.Drawing.Color MenuItemBorder => System.Drawing.Color.FromArgb(56, 189, 248); // #38BDF8
+        public override System.Drawing.Color MenuItemSelected => System.Drawing.Color.FromArgb(30, 41, 59); // #1E293B
+        public override System.Drawing.Color MenuStripGradientBegin => System.Drawing.Color.FromArgb(15, 23, 42);
+        public override System.Drawing.Color MenuStripGradientEnd => System.Drawing.Color.FromArgb(15, 23, 42);
+        public override System.Drawing.Color MenuItemSelectedGradientBegin => System.Drawing.Color.FromArgb(30, 41, 59);
+        public override System.Drawing.Color MenuItemSelectedGradientEnd => System.Drawing.Color.FromArgb(30, 41, 59);
+        public override System.Drawing.Color MenuItemPressedGradientBegin => System.Drawing.Color.FromArgb(30, 41, 59);
+        public override System.Drawing.Color MenuItemPressedGradientEnd => System.Drawing.Color.FromArgb(30, 41, 59);
     }
 
     public partial class MainWindow : Window
@@ -407,6 +430,128 @@ namespace FtPdfLite
 
         #region Native Pdfium Viewer (WindowsFormsHost)
 
+        [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string? pszSubIdList);
+
+        private static System.Windows.Forms.Cursor? _panHandCursor;
+
+        private static System.Windows.Forms.Cursor GetPanHandCursor()
+        {
+            if (_panHandCursor != null) return _panHandCursor;
+            try
+            {
+                using var stream = typeof(PdfRenderer).Assembly.GetManifestResourceStream("PdfiumViewer.pan.cur");
+                if (stream != null)
+                {
+                    _panHandCursor = new System.Windows.Forms.Cursor(stream);
+                    return _panHandCursor;
+                }
+            }
+            catch { }
+            return System.Windows.Forms.Cursors.SizeAll;
+        }
+
+        private void AttachRightClickPan(PdfRenderer renderer, System.Windows.Forms.ContextMenuStrip contextMenu)
+        {
+            bool isRightDragging = false;
+            System.Drawing.Point dragStartPoint = System.Drawing.Point.Empty;
+            System.Drawing.Point startOffsetPoint = System.Drawing.Point.Empty;
+            bool hasMovedSignificantly = false;
+
+            void ApplyDarkTheme()
+            {
+                try
+                {
+                    if (renderer.IsHandleCreated)
+                    {
+                        SetWindowTheme(renderer.Handle, "DarkMode_Explorer", null);
+                    }
+                }
+                catch { }
+            }
+
+            if (renderer.IsHandleCreated)
+                ApplyDarkTheme();
+            else
+                renderer.HandleCreated += (s, e) => ApplyDarkTheme();
+
+            renderer.MouseDown += (s, e) =>
+            {
+                if (e.Button == System.Windows.Forms.MouseButtons.Right || e.Button == System.Windows.Forms.MouseButtons.Middle)
+                {
+                    isRightDragging = true;
+                    dragStartPoint = e.Location;
+                    startOffsetPoint = renderer.DisplayRectangle.Location;
+                    hasMovedSignificantly = false;
+                    renderer.Capture = true;
+                    renderer.Cursor = GetPanHandCursor();
+                }
+            };
+
+            renderer.MouseMove += (s, e) =>
+            {
+                if (isRightDragging)
+                {
+                    int dx = e.Location.X - dragStartPoint.X;
+                    int dy = e.Location.Y - dragStartPoint.Y;
+
+                    if (Math.Abs(dx) > 2 || Math.Abs(dy) > 2)
+                    {
+                        hasMovedSignificantly = true;
+                        renderer.Cursor = GetPanHandCursor();
+
+                        int targetX = startOffsetPoint.X + dx;
+                        int targetY = startOffsetPoint.Y + dy;
+
+                        renderer.SetDisplayRectLocation(new System.Drawing.Point(targetX, targetY));
+                    }
+                }
+            };
+
+            renderer.MouseUp += (s, e) =>
+            {
+                if ((e.Button == System.Windows.Forms.MouseButtons.Right || e.Button == System.Windows.Forms.MouseButtons.Middle) && isRightDragging)
+                {
+                    isRightDragging = false;
+                    renderer.Capture = false;
+                    renderer.Cursor = System.Windows.Forms.Cursors.Default;
+                }
+            };
+
+            renderer.SetCursor += (s, e) =>
+            {
+                if (isRightDragging)
+                {
+                    e.Cursor = GetPanHandCursor();
+                }
+            };
+
+            contextMenu.Opening += (s, e) =>
+            {
+                if (hasMovedSignificantly)
+                {
+                    e.Cancel = true;
+                    hasMovedSignificantly = false;
+                }
+            };
+        }
+
+        private static void ApplyDarkContextMenuTheme(System.Windows.Forms.ContextMenuStrip contextMenu, params System.Windows.Forms.ToolStripMenuItem[] items)
+        {
+            try
+            {
+                contextMenu.Renderer = new DarkMenuRenderer();
+                contextMenu.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
+                contextMenu.ForeColor = System.Drawing.Color.FromArgb(248, 250, 252);
+                foreach (var item in items)
+                {
+                    item.ForeColor = System.Drawing.Color.FromArgb(248, 250, 252);
+                    item.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
+                }
+            }
+            catch { }
+        }
+
         private void InitializePdfRenderer()
         {
             if (_pdfRenderer != null) return;
@@ -453,7 +598,10 @@ namespace FtPdfLite
             {
                 copyItem.Enabled = _pdfRenderer.IsTextSelected;
             };
+            ApplyDarkContextMenuTheme(contextMenu, copyItem, selectAllItem);
             _pdfRenderer.ContextMenuStrip = contextMenu;
+
+            AttachRightClickPan(_pdfRenderer, contextMenu);
 
             PdfHost.Child = _pdfRenderer;
         }
@@ -479,7 +627,10 @@ namespace FtPdfLite
             {
                 splitCopyItem.Enabled = _splitPdfRenderer.IsTextSelected;
             };
+            ApplyDarkContextMenuTheme(splitContextMenu, splitCopyItem, splitSelectAllItem);
             _splitPdfRenderer.ContextMenuStrip = splitContextMenu;
+
+            AttachRightClickPan(_splitPdfRenderer, splitContextMenu);
 
             SplitPdfHost.Child = _splitPdfRenderer;
         }
@@ -673,6 +824,8 @@ namespace FtPdfLite
                 _tabs.Add(tab);
                 SetActiveTab(tab);
 
+                ShowAnalyzingFeedback();
+
                 // Run extraction & integrity analysis in background
                 _ = Task.Run(() =>
                 {
@@ -683,6 +836,7 @@ namespace FtPdfLite
                         tab.TotalPages = result.Report.TotalPages > 0 ? result.Report.TotalPages : (initialDoc?.PageCount ?? 1);
                         if (_activeTab == tab)
                         {
+                            HideAnalyzingFeedback();
                             UpdateNotepadView();
                             UpdatePageCards();
                         }
@@ -1490,9 +1644,62 @@ namespace FtPdfLite
 
         #region Validation & Notepad Panel
 
+        private void ShowAnalyzingFeedback()
+        {
+            BadgeAnalysisLoading.Visibility = Visibility.Visible;
+            ProgressBarAnalysis.Visibility = Visibility.Visible;
+
+            TxtHeaderDocType.Text = "Analisando Documento...";
+            TxtHeaderDocType.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
+
+            BadgeIntegrity.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+            BadgeIntegrity.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+            TxtIntegrityScore.Text = "Em Análise...";
+            TxtIntegrityScore.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+            TxtIntegrityStatusText.Text = "Inspecionando Camadas";
+
+            BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+            BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+            TxtImportVerdictIcon.Text = "⏳";
+            TxtImportVerdict.Text = "ANALISANDO ESTRUTURA DO PDF...";
+            TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+
+            BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A"));
+            BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B"));
+            TxtRetaguardaNoticeIcon.Text = "🔍";
+            TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+            TxtRetaguardaNotice.Text = "Inspecionando texto vetorial, fontes, tabelas e inteligência visual de imagens...";
+
+            TxtDiagStrangeChars.Text = "Sinais Estranhos: ...";
+            TxtDiagFormatting.Text = "Formatação: Verificando...";
+            TxtDiagImages.Text = "Imagens: Analisando...";
+            TxtDiagScannedPages.Text = "Páginas Escaneadas: ...";
+            TxtDiagCharCount.Text = "Total de Caracteres: ...";
+            TxtDiagWarning.Text = "Aguarde enquanto o FT PDF Lite valida a integridade do texto e analisa elementos visuais...";
+            TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+
+            TxtEditor.Text = "[Extraindo texto vetorial e analisando conteúdo do documento...]";
+            TxtEditorStats.Text = "Analisando...";
+            TxtEditorMode.Text = "Modo: Verificando";
+        }
+
+        private void HideAnalyzingFeedback()
+        {
+            BadgeAnalysisLoading.Visibility = Visibility.Collapsed;
+            ProgressBarAnalysis.Visibility = Visibility.Collapsed;
+        }
+
         private void UpdateNotepadView()
         {
-            if (_activeTab?.Extraction == null) return;
+            if (_activeTab == null) return;
+
+            if (_activeTab.Extraction == null)
+            {
+                ShowAnalyzingFeedback();
+                return;
+            }
+
+            HideAnalyzingFeedback();
 
             var report = _activeTab.Extraction.Report;
             var props = _activeTab.Extraction.Properties;
@@ -1539,58 +1746,81 @@ namespace FtPdfLite
             }
 
             TxtImportVerdict.Text = report.ImportVerdict;
-            if (report.ImportVerdict.StartsWith("DOCUMENTO IMPORTÁVEL", StringComparison.OrdinalIgnoreCase) &&
-                !report.ImportVerdict.Contains("FALHAS", StringComparison.OrdinalIgnoreCase))
-            {
-                TxtImportVerdictIcon.Text = "✅";
-                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E3A2F"));
-                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#10B981"));
-                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#34D399"));
-                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A7F3D0"));
-                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
-            }
-            else if (report.ImportVerdict.Contains("FALHAS", StringComparison.OrdinalIgnoreCase) ||
-                     report.ImportVerdict.StartsWith("Atenção", StringComparison.OrdinalIgnoreCase))
-            {
-                TxtImportVerdictIcon.Text = "⚠️";
-                if (report.HasMissingNegativeAmountsInImages || report.IntegrityScore < 40)
-                {
-                    BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E2619"));
-                    BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F97316"));
-                    TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDBA74"));
-                    TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FED7AA"));
-                }
-                else
-                {
-                    BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3D3215"));
-                    BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
-                    TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
-                    TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE68A"));
-                }
-                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
-            }
-            else
+
+            bool isUnimportableOrDataLoss = report.ImportVerdict.StartsWith("DOCUMENTO NÃO IMPORTÁVEL", StringComparison.OrdinalIgnoreCase) ||
+                                           report.HasAnomalousImages ||
+                                           report.OcrDiscoveredValues.Count > 0 ||
+                                           report.ScannedPagesCount > 0 ||
+                                           report.IntegrityScore < 60;
+
+            if (isUnimportableOrDataLoss)
             {
                 TxtImportVerdictIcon.Text = "⛔";
                 BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E1C1E"));
                 BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
                 TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCA5A5"));
+
+                BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2B1517"));
+                BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#991B1B"));
+                TxtRetaguardaNoticeIcon.Text = "⛔";
                 TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FECACA"));
-                TxtRetaguardaNotice.Text = "Atenção: documento com bloqueio de importação. Envie para a retaguarda.";
+                TxtRetaguardaNotice.Text = "Atenção: documento não importável. Informe o cliente.";
+            }
+            else if (report.ImportVerdict.Contains("FALHAS", StringComparison.OrdinalIgnoreCase) ||
+                     report.ImportVerdict.StartsWith("Atenção", StringComparison.OrdinalIgnoreCase))
+            {
+                TxtImportVerdictIcon.Text = "⚠️";
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3D3215"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
+
+                BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#292210"));
+                BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B45309"));
+                TxtRetaguardaNoticeIcon.Text = "ℹ️";
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE68A"));
+                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
+            }
+            else
+            {
+                TxtImportVerdictIcon.Text = "✅";
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E3A2F"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#10B981"));
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#34D399"));
+
+                BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#132720"));
+                BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#065F46"));
+                TxtRetaguardaNoticeIcon.Text = "ℹ️";
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#A7F3D0"));
+                TxtRetaguardaNotice.Text = "Atenção: caso mesmo como importável ele não importe, envie para a retaguarda.";
             }
 
             TxtDiagFormatting.Text = $"Formatação: {report.FormattingQuality}";
             TxtDiagStrangeChars.Text = $"Sinais Estranhos: {report.StrangeCharactersCount}";
-            if (report.HasMissingNegativeAmountsInImages)
+
+            // Imagens no Documento
+            if (report.HasAnomalousImages && report.AnomalousInlineImagesCount > 0)
             {
-                TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0} (⚠️ valores em figura)";
-                TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+                TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0} (⚠️ {report.AnomalousInlineImagesCount} no texto)";
+                TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FB923C"));
             }
             else
             {
-                TxtDiagImages.Text = $"Imagens / Scans: {report.TotalImagesFound} ({report.ScannedPagesCount} pág. scan)";
+                TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0}";
                 TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0"));
             }
+
+            // Páginas Escaneadas (SEPARADO!)
+            if (report.ScannedPagesCount > 0)
+            {
+                TxtDiagScannedPages.Text = $"Pág. Escaneadas: {report.ScannedPagesCount} de {report.TotalPages}";
+                TxtDiagScannedPages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+            }
+            else
+            {
+                TxtDiagScannedPages.Text = $"Pág. Escaneadas: 0 de {report.TotalPages}";
+                TxtDiagScannedPages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#94A3B8"));
+            }
+
             TxtDiagCharCount.Text = $"Total Caracteres: {report.TotalCharacters:N0}";
 
             TxtPropFileSize.Text = props.FileSize;
@@ -1603,10 +1833,10 @@ namespace FtPdfLite
 
             if (report.DiagnosticWarnings.Count > 0)
             {
-                TxtDiagWarning.Text = string.Join(" • ", report.DiagnosticWarnings);
-                if (report.HasMissingNegativeAmountsInImages)
+                TxtDiagWarning.Text = "• " + string.Join("\n\n• ", report.DiagnosticWarnings);
+                if (report.HasAnomalousImages)
                 {
-                    TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCA5A5"));
+                    TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDBA74"));
                 }
                 else if (report.IntegrityScore < 70)
                 {

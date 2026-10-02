@@ -40,11 +40,22 @@ namespace FtPdfLite.Services
         public int ScannedPagesCount { get; set; }
         public int TotalImagesFound { get; set; }
         public int SmallInlineImagesCount { get; set; }
-        public bool HasMissingNegativeAmountsInImages { get; set; }
+        public int AnomalousInlineImagesCount { get; set; }
+        public bool HasAnomalousImages { get; set; }
+        public bool HasMissingNegativeAmountsInImages
+        {
+            get => HasAnomalousImages;
+            set => HasAnomalousImages = value;
+        }
         public int MissingDebitLinesCount { get; set; }
         public List<string> MissingDebitLineSamples { get; set; } = new();
+        public List<string> DiscrepancySamples { get; set; } = new();
         public string FormattingQuality { get; set; } = "Bem Formatado";
         public List<string> DiagnosticWarnings { get; set; } = new();
+        public List<string> OcrDiscoveredValues { get; set; } = new();
+        public List<string> OcrDiscoveredHistories { get; set; } = new();
+        public List<string> OcrDiscoveredHeaders { get; set; } = new();
+        public List<string> OcrDiscoveredCodes { get; set; } = new();
     }
 
     public class ExtractionResult
@@ -132,6 +143,10 @@ namespace FtPdfLite.Services
             int scannedPages = 0;
             int totalImages = 0;
             int totalSmallInlineImages = 0;
+            int anomalousInlineImagesCount = 0;
+            var sampleDiscrepancies = new List<string>();
+            int ocrChecksPerformed = 0;
+            const int MaxOcrChecksPerDoc = 30;
             int debitLinesWithSingleAmountCount = 0;
             int normalTransactionLinesWithTwoAmountsCount = 0;
             int negativeAmountsInTextCount = 0;
@@ -167,16 +182,173 @@ namespace FtPdfLite.Services
                 for (int i = 1; i <= document.NumberOfPages; i++)
                 {
                     var page = document.GetPage(i);
-                    var letters = page.Letters.ToList();
+                    var rawLetters = page.Letters.ToList();
+                    var letters = DeduplicateOverprintedLetters(rawLetters);
+                    var words = ExtractWordsFromLetters(letters);
                     var images = page.GetImages().ToList();
                     totalImages += images.Count;
+                    int pageOcrChecks = 0;
 
-                    // Count small inline images typical of rendered text/badges/icons
+                    var pageLines = ExtractPageLines(words);
+
+                    // Análise espacial e dimensional de imagens na página
                     foreach (var img in images)
                     {
-                        if (img.Bounds.Height <= 45 && img.Bounds.Width <= 350 && img.Bounds.Height >= 2 && img.Bounds.Width >= 4)
+                        var box = img.Bounds;
+                        double w = box.Width;
+                        double h = box.Height;
+
+                        // Verifica se é imagem de fundo/escaneada que ocupa a página toda
+                        bool isPageScan = (w >= page.Width * 0.75 && h >= page.Height * 0.75);
+                        if (isPageScan)
+                            continue;
+
+                        // Verifica se a página está em orientação paisagem (horizontal) ou retrato (vertical)
+                        bool isLandscape = page.Width > page.Height;
+                        double headerRatio = isLandscape ? 0.74 : 0.82;
+                        double footerRatio = 0.09;
+
+                        // Verifica se é cabeçalho (topo institucional/emitente) ou rodapé
+                        bool isHeaderOrFooter = (box.Bottom > page.Height * headerRatio || box.Top < page.Height * footerRatio);
+                        if (isHeaderOrFooter)
+                            continue;
+
+                        // Banners largos, faixas divisórias horizontais ou contêineres de gráficos (não são valores de dados)
+                        bool isWideBannerOrChart = (w > page.Width * 0.50 || (w > 200 && h > 28));
+                        if (isWideBannerOrChart)
+                            continue;
+
+                        // Calhas das margens externas (logos de banco na margem esquerda/direita, carimbos laterais)
+                        bool isOuterMargin = (box.Right <= 48 || box.Left >= page.Width - 48);
+                        if (isOuterMargin)
+                            continue;
+
+                        // Logotipos, emblemas ou carimbos de dimensões amplas (linhas de tabelas medem 8 a 16pt de altura)
+                        // Uma imagem com altura >= 30pt e área >= 1400pt² é uma marca/logo institucional, não uma célula de tabela
+                        bool isLogoOrEmblem = (h >= 30 && w >= 35 && (w * h) >= 1400);
+                        if (isLogoOrEmblem)
+                            continue;
+
+                        // Códigos de barras (Chave de Acesso da NF-e, boletos ou guias)
+                        bool isBarcode = (w >= 120 && h <= 45 && (w / Math.Max(1, h)) >= 3.5);
+                        if (isBarcode)
+                            continue;
+
+                        // Dimensões típicas de elementos de conteúdo intercalados (valores, status, códigos, ícones)
+                        bool isContentDimension = (h >= 2 && h <= 90 && w >= 2 && w <= 250);
+
+                        if (isContentDimension)
                         {
                             totalSmallInlineImages++;
+
+                            if (pageLines.Count > 0)
+                            {
+                                // Verifica se a imagem compartilha alinhamento vertical com alguma linha de texto
+                                // e está contida horizontalmente no fluxo de texto da coluna
+                                var alignedLine = pageLines.FirstOrDefault(l =>
+                                    box.Bottom <= l.Top + 4 && box.Top >= l.Bottom - 4 &&
+                                    ((box.Left >= l.Left - 15 && box.Left <= l.Right + 15) ||
+                                     (box.Right >= l.Left - 15 && box.Right <= l.Right + 15)));
+
+                                if (alignedLine != null)
+                                {
+                                    // Mini inteligência: Verificação profunda via OCR Nativo do Windows
+                                    string? ocrText = null;
+                                    bool ranOcr = false;
+                                    if (WindowsOcrHelper.IsAvailable && ocrChecksPerformed < MaxOcrChecksPerDoc && pageOcrChecks < 5)
+                                    {
+                                        byte[]? rawImgBytes = null;
+                                        if (img.TryGetPng(out byte[] pngData))
+                                        {
+                                            rawImgBytes = pngData;
+                                        }
+                                        else
+                                        {
+                                            try { rawImgBytes = img.RawBytes.ToArray(); } catch { }
+                                        }
+
+                                        if (rawImgBytes != null && rawImgBytes.Length > 0)
+                                        {
+                                            ocrChecksPerformed++;
+                                            pageOcrChecks++;
+                                            ranOcr = true;
+                                            ocrText = WindowsOcrHelper.RecognizeText(rawImgBytes);
+                                        }
+                                    }
+
+                                    if (ranOcr)
+                                    {
+                                        var ocrResult = WindowsOcrHelper.ClassifyOcrText(ocrText, w, h);
+
+                                        // Se o OCR confirmou que é logotipo/marca institucional: descartar como anomalia
+                                        if (ocrResult.Category == OcrContentCategory.InstitutionalLogo)
+                                        {
+                                            continue;
+                                        }
+
+                                        // Se a imagem não possui nenhum texto/dado legível: é ícone, bullet gráfico ou traço decorativo
+                                        if (ocrResult.Category == OcrContentCategory.None)
+                                        {
+                                            continue;
+                                        }
+
+                                        // Se for cabeçalho de coluna/tabela (ex: "DESCRIÇÃO", "TIPO", "SALDO")
+                                        if (ocrResult.Category == OcrContentCategory.ColumnHeaderOrLabel)
+                                        {
+                                            if (!report.OcrDiscoveredHeaders.Contains(ocrResult.CleanText) && report.OcrDiscoveredHeaders.Count < 8)
+                                            {
+                                                report.OcrDiscoveredHeaders.Add(ocrResult.CleanText);
+                                            }
+                                            continue;
+                                        }
+
+                                        // Se for código / data / referência
+                                        if (ocrResult.Category == OcrContentCategory.CodeOrDateOrRef)
+                                        {
+                                            if (!report.OcrDiscoveredCodes.Contains(ocrResult.CleanText) && report.OcrDiscoveredCodes.Count < 6)
+                                            {
+                                                report.OcrDiscoveredCodes.Add(ocrResult.CleanText);
+                                            }
+                                        }
+
+                                        // Se for valor monetário ou histórico transacional: discrepância real confirmada!
+                                        anomalousInlineImagesCount++;
+
+                                        if (ocrResult.Category == OcrContentCategory.MonetaryValue)
+                                        {
+                                            if (!report.OcrDiscoveredValues.Contains(ocrResult.CleanText) && report.OcrDiscoveredValues.Count < 10)
+                                            {
+                                                report.OcrDiscoveredValues.Add(ocrResult.CleanText);
+                                            }
+                                        }
+                                        else if (ocrResult.Category == OcrContentCategory.TransactionalHistory)
+                                        {
+                                            if (!report.OcrDiscoveredHistories.Contains(ocrResult.CleanText) && report.OcrDiscoveredHistories.Count < 8)
+                                            {
+                                                report.OcrDiscoveredHistories.Add(ocrResult.CleanText);
+                                            }
+                                        }
+
+                                        if (sampleDiscrepancies.Count < 4)
+                                        {
+                                            string preview = alignedLine.Text.Trim();
+                                            if (preview.Length > 50) preview = preview.Substring(0, 50) + "...";
+
+                                            string positionDesc = (box.Left >= alignedLine.Right - 8) ? "à direita" : ((box.Right <= alignedLine.Left + 8) ? "à esquerda" : "intercalada no corpo do texto");
+                                            string natureDesc = $"[{ocrResult.CategoryDisplayName}]: \"{ocrResult.CleanText}\"";
+                                            sampleDiscrepancies.Add($"Pág. {i}: Linha \"{preview}\" possui imagem {positionDesc} ({natureDesc}).");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // Sem execução de OCR (budget excedido): se já confirmamos valores no documento e dimensões batem com valores
+                                        if (report.OcrDiscoveredValues.Count > 0 && h >= 4 && h <= 35 && w >= 15 && w <= 220)
+                                        {
+                                            anomalousInlineImagesCount++;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -189,21 +361,22 @@ namespace FtPdfLite.Services
                         props.PageOrientation = page.Width > page.Height ? "Paisagem (Horizontal)" : "Retrato (Vertical)";
                     }
 
-                    // Detect scanned page: minimal/no vector letters, but contains images
-                    if (letters.Count < 20 && images.Count > 0)
+                    // Detect scanned page: minimal/no vector letters, but contains images, or image covers full page
+                    bool isFullPageScan = images.Any(img => img.Bounds.Width >= page.Width * 0.75 && img.Bounds.Height >= page.Height * 0.75);
+                    if (isFullPageScan || (letters.Count < 20 && images.Count > 0))
                     {
                         scannedPages++;
                     }
 
                     // Raw text extraction for this page
                     var pageRawText = string.Concat(letters.Select(l => l.Value));
-                    rawBuilder.AppendLine($"--- [PÁGINA {i}] ---");
+                    rawBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
                     rawBuilder.AppendLine(pageRawText);
                     rawBuilder.AppendLine();
 
                     // Formatted layout text extraction
-                    var pageFormattedText = ExtractFormattedPageText(page);
-                    formattedBuilder.AppendLine($"--- [PÁGINA {i}] ---");
+                    var pageFormattedText = ExtractFormattedPageText(words);
+                    formattedBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
                     formattedBuilder.AppendLine(pageFormattedText);
                     formattedBuilder.AppendLine();
 
@@ -240,7 +413,6 @@ namespace FtPdfLite.Services
                     }
 
                     // Analyze words and linguistic validity
-                    var words = page.GetWords().ToList();
                     totalWords += words.Count;
 
                     foreach (var word in words)
@@ -318,6 +490,8 @@ namespace FtPdfLite.Services
                 report.TotalWords = totalWords;
                 report.TotalImagesFound = totalImages;
                 report.SmallInlineImagesCount = totalSmallInlineImages;
+                report.AnomalousInlineImagesCount = anomalousInlineImagesCount;
+                report.DiscrepancySamples = sampleDiscrepancies;
                 report.MissingDebitLinesCount = debitLinesWithSingleAmountCount;
                 report.MissingDebitLineSamples = sampleMissingDebitLines;
                 report.ScannedPagesCount = scannedPages;
@@ -363,48 +537,18 @@ namespace FtPdfLite.Services
                     }
                 }
 
-                // 3. Check for Financial Statement with Missing Negative Amounts / Debits Embedded as Images
+                // 3. Verificação de Imagens Anômalas embutidas no fluxo de texto/tabelas
+                // Documentos com discrepâncias estruturais reais possuem imagens inline substituindo dados/valores/ícones
                 string rawTextSample = rawBuilder.Length > 8000 ? rawBuilder.ToString(0, 8000) : rawBuilder.ToString();
                 bool isFinancialDoc = financialTermHits >= 3 || 
                                      rawTextSample.Contains("extrato", StringComparison.OrdinalIgnoreCase) ||
                                      rawTextSample.Contains("saldo", StringComparison.OrdinalIgnoreCase) ||
-                                     rawTextSample.Contains("Stone", StringComparison.OrdinalIgnoreCase) ||
-                                     rawTextSample.Contains("Instituição de Pagamento", StringComparison.OrdinalIgnoreCase) ||
-                                     rawTextSample.Contains("Instituicao de Pagamento", StringComparison.OrdinalIgnoreCase);
+                                     rawTextSample.Contains("Stone", StringComparison.OrdinalIgnoreCase);
 
-                bool hasAnomalousImagesInVector = !isScannedDocument && totalLetters > 200 && (
-                    (totalImages >= 20 && ((double)totalImages / Math.Max(1, report.TotalPages)) >= 2.0) ||
-                    totalSmallInlineImages >= 10 ||
-                    totalImages >= 50
+                bool hasDetectedDiscrepancies = !isScannedDocument && !isScrambledOrEncrypted && totalLetters > 80 && (
+                    anomalousInlineImagesCount >= 2 ||
+                    (anomalousInlineImagesCount >= 1 && (sampleDiscrepancies.Count > 0 || (isFinancialDoc && debitLinesWithSingleAmountCount >= 1)))
                 );
-
-                bool isWebPrintDriver = props.Producer.Contains("Print To PDF", StringComparison.OrdinalIgnoreCase) ||
-                                        props.Creator.Contains("Print To PDF", StringComparison.OrdinalIgnoreCase) ||
-                                        props.Producer.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
-                                        props.Creator.Contains("Chrome", StringComparison.OrdinalIgnoreCase) ||
-                                        props.Producer.Contains("Edge", StringComparison.OrdinalIgnoreCase) ||
-                                        props.Creator.Contains("Edge", StringComparison.OrdinalIgnoreCase);
-
-                bool hasMissingNegativeAmounts = false;
-
-                if (isFinancialDoc && hasAnomalousImagesInVector)
-                {
-                    if (debitLinesWithSingleAmountCount >= 2 || (negativeAmountsInTextCount == 0 && (financialTermHits >= 10 || totalImages >= 25)))
-                    {
-                        hasMissingNegativeAmounts = true;
-                    }
-                }
-                else if (isFinancialDoc && isWebPrintDriver && totalImages >= 5)
-                {
-                    if (debitLinesWithSingleAmountCount >= 1 || negativeAmountsInTextCount == 0)
-                    {
-                        hasMissingNegativeAmounts = true;
-                    }
-                }
-                else if (isFinancialDoc && debitLinesWithSingleAmountCount >= 5 && normalTransactionLinesWithTwoAmountsCount >= 5 && totalImages >= debitLinesWithSingleAmountCount)
-                {
-                    hasMissingNegativeAmounts = true;
-                }
 
                 // Evaluate Score & Verdict
                 if (isScannedDocument)
@@ -445,24 +589,64 @@ namespace FtPdfLite.Services
                     report.ImportVerdictColor = "#EF4444";
                     report.DiagnosticWarnings.Add("Nenhum caractere de texto legível foi encontrado no arquivo.");
                 }
-                else if (hasMissingNegativeAmounts)
+                else if (hasDetectedDiscrepancies)
                 {
-                    report.IntegrityScore = 25.0;
-                    report.HasMissingNegativeAmountsInImages = true;
-                    report.IntegrityStatus = "25% - Lançamentos em Imagem (Incompleto)";
-                    report.DocumentType = "Extrato Híbrido (Valores em Imagem)";
-                    report.FormattingQuality = "Valores Negativos Ocultos em Imagens";
-                    report.ImportVerdict = "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS";
+                    double penalty = Math.Max(anomalousInlineImagesCount * 4.0, totalSmallInlineImages * 1.5);
+                    double score = Math.Clamp(Math.Round(100.0 - penalty, 1), 30.0, 55.0);
+
+                    report.IntegrityScore = score;
+                    report.HasAnomalousImages = true;
+                    report.IntegrityStatus = $"{score:0.0}% - Discrepâncias Visuais (Imagens no Texto)";
+                    report.DocumentType = "Documento Híbrido (Texto com Elementos em Imagem)";
+                    report.FormattingQuality = "Imagens Intercaladas no Conteúdo";
+                    report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL (DADOS EM FIGURA)";
                     report.ImportVerdictColor = "#EF4444"; // Red
 
                     double avgPerPg = report.TotalPages > 0 ? (double)totalImages / report.TotalPages : 0;
-                    report.DiagnosticWarnings.Insert(0, $"Atenção Crítica: Detectadas {totalImages:N0} imagens embutidas ({avgPerPg:0.1} por página). Valores negativos e tarifas foram gerados como figuras (imagens) e NÃO constam na camada de texto.");
-                    report.DiagnosticWarnings.Insert(1, "Risco na Importação: O sistema contábil NÃO importará essas tarifas/débitos, gerando conciliação incompleta e lançamentos faltantes.");
-                    if (sampleMissingDebitLines.Count > 0)
+                    
+                    if (anomalousInlineImagesCount > 0)
                     {
-                        report.DiagnosticWarnings.Insert(2, $"Exemplo de linha com valor ausente no texto: \"{sampleMissingDebitLines[0]}\" (tarifa sem o valor do débito).");
+                        report.DiagnosticWarnings.Add($"⚠️ Discrepância Estrutural Detectada: Foram encontradas {anomalousInlineImagesCount} imagens com dados no fluxo de texto/tabelas ({totalImages} imagens no total do documento, média de {avgPerPg:0.0} por página).");
                     }
-                    report.DiagnosticWarnings.Add("Solução recomendada: Baixar o extrato original em OFX ou Excel (XLSX) diretamente do internet banking, ou gerar o PDF nativo do banco sem usar 'Imprimir para PDF' do navegador.");
+                    else
+                    {
+                        report.DiagnosticWarnings.Add($"⚠️ Alta Concentração de Imagens: Foram detectadas {totalImages} figuras/imagens no documento ({avgPerPg:0.0} por página) intercaladas com texto vetorial.");
+                    }
+
+                    if (report.OcrDiscoveredValues.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredValues.Take(6).Select(v => $"\"{v}\""));
+                        report.DiagnosticWarnings.Add($"⚠️ OCR Identificou Valores Monetários em Figuras: Foram detectadas ocorrências de valores contábeis gravados como imagem (Exemplos: {samples}). Esses valores NÃO constam na camada de texto vetorial e podem ser omitidos na importação contábil.");
+                    }
+
+                    if (report.OcrDiscoveredHistories.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredHistories.Take(5).Select(h => $"\"{h}\""));
+                        report.DiagnosticWarnings.Add($"⚠️ OCR Identificou Históricos em Figuras: Foram detectadas descrições transacionais gravadas como imagem (Exemplos: {samples}).");
+                    }
+
+                    if (report.OcrDiscoveredHeaders.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredHeaders.Take(6).Select(h => $"\"{h}\""));
+                        report.DiagnosticWarnings.Add($"ℹ️ Rótulos de Cabeçalho em Figura: Rótulos/colunas detectados como imagem pelo OCR: {samples}.");
+                    }
+
+                    report.DiagnosticWarnings.Add("Risco de Dados Faltantes: Elementos visuais (como valores, tarifas, status, códigos, assinaturas ou ícones) foram gerados como figura e NÃO constam na camada de texto. Esses campos não serão extraídos e podem causar lançamentos faltantes na importação.");
+
+                    if (sampleDiscrepancies.Count > 0)
+                    {
+                        foreach (var sample in sampleDiscrepancies)
+                        {
+                            report.DiagnosticWarnings.Add($"Discrepância visual localizada: {sample}");
+                        }
+                    }
+
+                    if (isFinancialDoc && sampleMissingDebitLines.Count > 0)
+                    {
+                        report.DiagnosticWarnings.Add($"Exemplo de lançamento com valor ausente no texto: \"{sampleMissingDebitLines[0]}\"");
+                    }
+
+                    report.DiagnosticWarnings.Add("Orientação: Compare a visualização do PDF com o texto extraído no Bloco de Notas ao lado. Caso ocorram divergências na importação, solicite o documento em formato de dados (OFX, Excel/XLSX, CSV) ou PDF vetorial gerado diretamente pelo sistema emissor.");
                 }
                 else
                 {
@@ -574,24 +758,123 @@ namespace FtPdfLite.Services
             return result;
         }
 
-        private static string ExtractFormattedPageText(Page page)
+        private class ExtractedWord
         {
-            var words = page.GetWords().ToList();
-            if (words.Count == 0)
+            public string Text { get; set; } = string.Empty;
+            public double Left { get; set; }
+            public double Right { get; set; }
+            public double Bottom { get; set; }
+            public double Top { get; set; }
+            public double Height => Top - Bottom;
+        }
+
+        private static List<ExtractedWord> ExtractWordsFromLetters(IReadOnlyList<Letter> letters)
+        {
+            var result = new List<ExtractedWord>();
+            if (letters == null || letters.Count == 0) return result;
+
+            var lineGroups = new List<List<Letter>>();
+            var sorted = letters.OrderByDescending(l => l.GlyphRectangle.Bottom).ThenBy(l => l.GlyphRectangle.Left).ToList();
+
+            foreach (var l in sorted)
             {
-                return page.Text;
+                bool added = false;
+                foreach (var lg in lineGroups)
+                {
+                    if (Math.Abs(lg[0].GlyphRectangle.Bottom - l.GlyphRectangle.Bottom) < 4.0)
+                    {
+                        lg.Add(l);
+                        added = true;
+                        break;
+                    }
+                }
+                if (!added)
+                {
+                    lineGroups.Add(new List<Letter> { l });
+                }
             }
 
-            var lines = new List<List<Word>>();
-            var sortedWords = words.OrderByDescending(w => w.BoundingBox.Bottom).ThenBy(w => w.BoundingBox.Left).ToList();
+            foreach (var lg in lineGroups.OrderByDescending(g => g[0].GlyphRectangle.Bottom))
+            {
+                var ordered = lg.OrderBy(l => l.GlyphRectangle.Left).ToList();
+                ExtractedWord? currentWord = null;
+
+                for (int i = 0; i < ordered.Count; i++)
+                {
+                    var l = ordered[i];
+                    if (string.IsNullOrWhiteSpace(l.Value))
+                    {
+                        if (currentWord != null)
+                        {
+                            result.Add(currentWord);
+                            currentWord = null;
+                        }
+                        continue;
+                    }
+
+                    if (currentWord != null)
+                    {
+                        double gap = l.GlyphRectangle.Left - currentWord.Right;
+                        double spaceThreshold = Math.Max(2.0, l.PointSize * 0.22);
+                        if (gap > spaceThreshold)
+                        {
+                            result.Add(currentWord);
+                            currentWord = null;
+                        }
+                    }
+
+                    if (currentWord == null)
+                    {
+                        currentWord = new ExtractedWord
+                        {
+                            Text = l.Value,
+                            Left = l.GlyphRectangle.Left,
+                            Right = l.GlyphRectangle.Right,
+                            Bottom = l.GlyphRectangle.Bottom,
+                            Top = l.GlyphRectangle.Top
+                        };
+                    }
+                    else
+                    {
+                        currentWord.Text += l.Value;
+                        currentWord.Right = Math.Max(currentWord.Right, l.GlyphRectangle.Right);
+                        currentWord.Top = Math.Max(currentWord.Top, l.GlyphRectangle.Top);
+                        currentWord.Bottom = Math.Min(currentWord.Bottom, l.GlyphRectangle.Bottom);
+                    }
+                }
+
+                if (currentWord != null)
+                {
+                    result.Add(currentWord);
+                }
+            }
+
+            return result;
+        }
+
+        private class PageLineInfo
+        {
+            public double Bottom { get; set; }
+            public double Top { get; set; }
+            public double Left { get; set; }
+            public double Right { get; set; }
+            public string Text { get; set; } = string.Empty;
+        }
+
+        private static List<PageLineInfo> ExtractPageLines(IReadOnlyList<ExtractedWord> words)
+        {
+            if (words == null || words.Count == 0) return new List<PageLineInfo>();
+
+            var lineGroups = new List<List<ExtractedWord>>();
+            var sortedWords = words.OrderByDescending(w => w.Bottom).ThenBy(w => w.Left).ToList();
 
             foreach (var word in sortedWords)
             {
                 bool added = false;
-                foreach (var line in lines)
+                foreach (var line in lineGroups)
                 {
-                    var firstWordInLine = line[0];
-                    if (Math.Abs(firstWordInLine.BoundingBox.Bottom - word.BoundingBox.Bottom) < 4.5)
+                    var firstWord = line[0];
+                    if (Math.Abs(firstWord.Bottom - word.Bottom) < 4.5)
                     {
                         line.Add(word);
                         added = true;
@@ -601,29 +884,73 @@ namespace FtPdfLite.Services
 
                 if (!added)
                 {
-                    lines.Add(new List<Word> { word });
+                    lineGroups.Add(new List<ExtractedWord> { word });
                 }
             }
 
-            lines = lines.OrderByDescending(l => l[0].BoundingBox.Bottom).ToList();
+            var result = new List<PageLineInfo>();
+            foreach (var line in lineGroups)
+            {
+                var ordered = line.OrderBy(w => w.Left).ToList();
+                result.Add(new PageLineInfo
+                {
+                    Bottom = ordered.Min(w => w.Bottom),
+                    Top = ordered.Max(w => w.Top),
+                    Left = ordered.Min(w => w.Left),
+                    Right = ordered.Max(w => w.Right),
+                    Text = string.Join(" ", ordered.Select(w => w.Text))
+                });
+            }
+
+            return result;
+        }
+
+        private static string ExtractFormattedPageText(IReadOnlyList<ExtractedWord> words)
+        {
+            if (words == null || words.Count == 0) return string.Empty;
+
+            var lineGroups = new List<List<ExtractedWord>>();
+            var sortedWords = words.OrderByDescending(w => w.Bottom).ThenBy(w => w.Left).ToList();
+
+            foreach (var word in sortedWords)
+            {
+                bool added = false;
+                foreach (var line in lineGroups)
+                {
+                    var firstWordInLine = line[0];
+                    if (Math.Abs(firstWordInLine.Bottom - word.Bottom) < 4.5)
+                    {
+                        line.Add(word);
+                        added = true;
+                        break;
+                    }
+                }
+
+                if (!added)
+                {
+                    lineGroups.Add(new List<ExtractedWord> { word });
+                }
+            }
+
+            lineGroups = lineGroups.OrderByDescending(l => l[0].Bottom).ToList();
 
             var sb = new StringBuilder();
             double lastY = -1;
 
-            foreach (var line in lines)
+            foreach (var line in lineGroups)
             {
-                var orderedLine = line.OrderBy(w => w.BoundingBox.Left).ToList();
+                var orderedLine = line.OrderBy(w => w.Left).ToList();
 
                 if (lastY > 0)
                 {
-                    double lineGap = lastY - orderedLine[0].BoundingBox.Bottom;
-                    if (lineGap > (orderedLine[0].BoundingBox.Height * 1.8))
+                    double lineGap = lastY - orderedLine[0].Bottom;
+                    if (lineGap > (orderedLine[0].Height * 1.8))
                     {
                         sb.AppendLine();
                     }
                 }
 
-                lastY = orderedLine[0].BoundingBox.Bottom;
+                lastY = orderedLine[0].Bottom;
 
                 for (int w = 0; w < orderedLine.Count; w++)
                 {
@@ -637,6 +964,68 @@ namespace FtPdfLite.Services
             }
 
             return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>
+        /// Deduplica caracteres gerados com falso negrito ("fake bold" / double-strike / overprinting).
+        /// Muitos geradores de PDF e drivers de impressão que não possuem a variante em negrito da fonte
+        /// desenham o mesmo glifo 2 ou mais vezes com deslocamento horizontal de ~0.3pt.
+        /// </summary>
+        private static List<Letter> DeduplicateOverprintedLetters(IReadOnlyList<Letter> letters)
+        {
+            if (letters == null || letters.Count <= 1) return letters?.ToList() ?? new List<Letter>();
+
+            var result = new List<Letter>(letters.Count);
+            var buckets = new Dictionary<int, List<Letter>>();
+
+            for (int i = 0; i < letters.Count; i++)
+            {
+                var current = letters[i];
+                if (string.IsNullOrEmpty(current.Value) || char.IsWhiteSpace(current.Value[0]))
+                {
+                    result.Add(current);
+                    continue;
+                }
+
+                double curBottom = current.GlyphRectangle.Bottom;
+                double curLeft = current.GlyphRectangle.Left;
+                int yKey = (int)Math.Round(curBottom);
+
+                bool isDuplicate = false;
+
+                // Checa buckets Y vizinhos (mesma linha ou borda próxima)
+                for (int k = yKey - 1; k <= yKey + 1; k++)
+                {
+                    if (buckets.TryGetValue(k, out var candidates))
+                    {
+                        for (int j = 0; j < candidates.Count; j++)
+                        {
+                            var prev = candidates[j];
+                            if (prev.Value == current.Value &&
+                                Math.Abs(prev.GlyphRectangle.Bottom - curBottom) <= 0.6 &&
+                                Math.Abs(prev.GlyphRectangle.Left - curLeft) <= 0.8)
+                            {
+                                isDuplicate = true;
+                                break;
+                            }
+                        }
+                        if (isDuplicate) break;
+                    }
+                }
+
+                if (!isDuplicate)
+                {
+                    result.Add(current);
+                    if (!buckets.TryGetValue(yKey, out var list))
+                    {
+                        list = new List<Letter>();
+                        buckets[yKey] = list;
+                    }
+                    list.Add(current);
+                }
+            }
+
+            return result;
         }
 
         private static bool IsValidLinguisticWord(string text)
