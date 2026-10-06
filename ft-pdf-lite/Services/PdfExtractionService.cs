@@ -56,6 +56,18 @@ namespace FtPdfLite.Services
         public List<string> OcrDiscoveredHistories { get; set; } = new();
         public List<string> OcrDiscoveredHeaders { get; set; } = new();
         public List<string> OcrDiscoveredCodes { get; set; } = new();
+        public bool IsImageWithUnderlyingTextOrOcr { get; set; }
+        public int PagesWithUnderlyingTextCount { get; set; }
+        public int OcrRecognizedPagesCount { get; set; }
+    }
+
+    public class ExtractionProgressInfo
+    {
+        public int CurrentPage { get; set; }
+        public int TotalPages { get; set; }
+        public string StatusMessage { get; set; } = string.Empty;
+        public bool IsLargeFile { get; set; }
+        public double FileSizeMb { get; set; }
     }
 
     public class ExtractionResult
@@ -107,7 +119,7 @@ namespace FtPdfLite.Services
             "taxa", "débito", "debito", "saída", "saida", "estorno", "iof", "anuidade", "encargos"
         };
 
-        public ExtractionResult ExtractAndAnalyze(string filePath, string? password = null)
+        public ExtractionResult ExtractAndAnalyze(string filePath, string? password = null, Action<ExtractionProgressInfo>? onProgress = null)
         {
             var result = new ExtractionResult();
             var report = result.Report;
@@ -141,6 +153,10 @@ namespace FtPdfLite.Services
             int validWordCount = 0;
             int recognizedWordHits = 0;
             int scannedPages = 0;
+            int pagesWithUnderlyingText = 0;
+            int ocrRecognizedPages = 0;
+            int ocrFullPageChecksPerformed = 0;
+            const int MaxOcrFullPageChecksPerDoc = 3;
             int totalImages = 0;
             int totalSmallInlineImages = 0;
             int anomalousInlineImagesCount = 0;
@@ -170,6 +186,22 @@ namespace FtPdfLite.Services
                     ? (!string.IsNullOrEmpty(password) ? "Criptografado / Protegido (Desbloqueado com Senha)" : "Criptografado / Protegido") 
                     : "Sem restrições (Livre)";
 
+                double fileSizeMb = fileInfo.Length / (1024.0 * 1024.0);
+                bool isLargeFile = fileSizeMb >= 5.0 || document.NumberOfPages >= 15;
+                int maxOcrFullPages = isLargeFile ? 1 : MaxOcrFullPageChecksPerDoc;
+                int maxInlineOcr = isLargeFile ? 8 : MaxOcrChecksPerDoc;
+
+                onProgress?.Invoke(new ExtractionProgressInfo
+                {
+                    CurrentPage = 0,
+                    TotalPages = document.NumberOfPages,
+                    StatusMessage = isLargeFile
+                        ? $"Arquivo grande detectado ({fileSizeMb:0.1} MB, {document.NumberOfPages} pág.). Otimizando análise estrutural..."
+                        : $"Iniciando análise ({document.NumberOfPages} pág.)...",
+                    IsLargeFile = isLargeFile,
+                    FileSizeMb = fileSizeMb
+                });
+
                 // Extract Document Metadata
                 var info = document.Information;
                 if (!string.IsNullOrWhiteSpace(info.Title)) props.Title = info.Title;
@@ -181,6 +213,21 @@ namespace FtPdfLite.Services
 
                 for (int i = 1; i <= document.NumberOfPages; i++)
                 {
+                    if (onProgress != null && (document.NumberOfPages <= 20 || i % 2 == 1 || i == document.NumberOfPages))
+                    {
+                        string msg = isLargeFile
+                            ? $"Analisando pág. {i} de {document.NumberOfPages} ({fileSizeMb:0.1} MB)..."
+                            : $"Analisando página {i} de {document.NumberOfPages}...";
+                        onProgress.Invoke(new ExtractionProgressInfo
+                        {
+                            CurrentPage = i,
+                            TotalPages = document.NumberOfPages,
+                            StatusMessage = msg,
+                            IsLargeFile = isLargeFile,
+                            FileSizeMb = fileSizeMb
+                        });
+                    }
+
                     var page = document.GetPage(i);
                     var rawLetters = page.Letters.ToList();
                     var letters = DeduplicateOverprintedLetters(rawLetters);
@@ -255,7 +302,7 @@ namespace FtPdfLite.Services
                                     // Mini inteligência: Verificação profunda via OCR Nativo do Windows
                                     string? ocrText = null;
                                     bool ranOcr = false;
-                                    if (WindowsOcrHelper.IsAvailable && ocrChecksPerformed < MaxOcrChecksPerDoc && pageOcrChecks < 5)
+                                    if (WindowsOcrHelper.IsAvailable && ocrChecksPerformed < maxInlineOcr && pageOcrChecks < 3 && report.OcrDiscoveredValues.Count < 3)
                                     {
                                         byte[]? rawImgBytes = null;
                                         if (img.TryGetPng(out byte[] pngData))
@@ -361,71 +408,178 @@ namespace FtPdfLite.Services
                         props.PageOrientation = page.Width > page.Height ? "Paisagem (Horizontal)" : "Retrato (Vertical)";
                     }
 
-                    // Detect scanned page: minimal/no vector letters, but contains images, or image covers full page
-                    bool isFullPageScan = images.Any(img => img.Bounds.Width >= page.Width * 0.75 && img.Bounds.Height >= page.Height * 0.75);
-                    if (isFullPageScan || (letters.Count < 20 && images.Count > 0))
+                    // Verifica se a página contém imagem de fundo escaneada cobrindo a página
+                    bool isFullPageScan = images.Any(img => 
+                        (img.Bounds.Width >= page.Width * 0.70 && img.Bounds.Height >= page.Height * 0.70) ||
+                        ((img.Bounds.Width * img.Bounds.Height) >= (page.Width * page.Height * 0.50)));
+
+                    bool hasVectorLetters = letters.Count >= 20;
+                    string pageFormattedText = string.Empty;
+
+                    if (isFullPageScan && hasVectorLetters)
                     {
-                        scannedPages++;
+                        // Reconhecido que é uma página de imagem, mas possui camada de texto por baixo!
+                        pagesWithUnderlyingText++;
                     }
-
-                    // Raw text extraction for this page
-                    var pageRawText = string.Concat(letters.Select(l => l.Value));
-                    rawBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
-                    rawBuilder.AppendLine(pageRawText);
-                    rawBuilder.AppendLine();
-
-                    // Formatted layout text extraction
-                    var pageFormattedText = ExtractFormattedPageText(words);
-                    formattedBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
-                    formattedBuilder.AppendLine(pageFormattedText);
-                    formattedBuilder.AppendLine();
-
-                    // Analyze characters on page
-                    foreach (var letter in letters)
+                    else if (!hasVectorLetters && images.Count > 0)
                     {
-                        string val = letter.Value;
-                        foreach (char c in val)
+                        // Página escaneada sem texto vetorial direto. Tenta OCR Nativo se disponível.
+                        bool ocrFoundText = false;
+                        string? ocrPageText = null;
+
+                        // Se já confirmamos que é arquivo convertido (camada de texto por baixo), evitamos OCR repetitivo
+                        bool shouldAttemptFullPageOcr = (pagesWithUnderlyingText == 0) && (ocrFullPageChecksPerformed < maxOcrFullPages);
+
+                        if (WindowsOcrHelper.IsAvailable && shouldAttemptFullPageOcr)
                         {
-                            totalLetters++;
+                            onProgress?.Invoke(new ExtractionProgressInfo
+                            {
+                                CurrentPage = i,
+                                TotalPages = document.NumberOfPages,
+                                StatusMessage = $"Executando OCR na página escaneada {i} de {document.NumberOfPages}...",
+                                IsLargeFile = isLargeFile,
+                                FileSizeMb = fileSizeMb
+                            });
 
-                            if (char.IsLetter(c))
+                            var mainScanImg = images.OrderByDescending(im => im.Bounds.Width * im.Bounds.Height).FirstOrDefault();
+                            if (mainScanImg != null)
                             {
-                                alphaCount++;
-                            }
-                            else if (char.IsDigit(c))
-                            {
-                                digitCount++;
-                            }
-                            else if (!char.IsWhiteSpace(c))
-                            {
-                                symbolCount++;
-                            }
-
-                            if (IsStrangeOrCorruptCharacter(c))
-                            {
-                                strangeChars++;
-                                if (strangeCharSet.Count < 10 && !char.IsWhiteSpace(c))
+                                byte[]? rawImgBytes = null;
+                                if (mainScanImg.TryGetPng(out byte[] pngData))
                                 {
-                                    strangeCharSet.Add(c);
+                                    rawImgBytes = pngData;
+                                }
+                                else
+                                {
+                                    try 
+                                    { 
+                                        var rawList = mainScanImg.RawBytes;
+                                        if (rawList.Count >= 2 && rawList[0] == 0xFF && rawList[1] == 0xD8 && rawList.Count <= 10 * 1024 * 1024)
+                                        {
+                                            rawImgBytes = rawList.ToArray();
+                                        }
+                                    } 
+                                    catch { }
+                                }
+
+                                if (rawImgBytes != null && rawImgBytes.Length > 0)
+                                {
+                                    ocrFullPageChecksPerformed++;
+                                    ocrPageText = WindowsOcrHelper.RecognizeText(rawImgBytes);
+                                    if (!string.IsNullOrWhiteSpace(ocrPageText) && ocrPageText.Length >= 15)
+                                    {
+                                        ocrFoundText = true;
+                                        ocrRecognizedPages++;
+                                    }
                                 }
                             }
                         }
+
+                        if (ocrFoundText && !string.IsNullOrWhiteSpace(ocrPageText))
+                        {
+                            pageFormattedText = ocrPageText;
+                            rawBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages} (TEXTO RECONHECIDO VIA OCR)] ---");
+                            rawBuilder.AppendLine(ocrPageText);
+                            rawBuilder.AppendLine();
+
+                            formattedBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages} (TEXTO RECONHECIDO VIA OCR)] ---");
+                            formattedBuilder.AppendLine(ocrPageText);
+                            formattedBuilder.AppendLine();
+
+                            foreach (char c in ocrPageText)
+                            {
+                                totalLetters++;
+                                if (char.IsLetter(c)) alphaCount++;
+                                else if (char.IsDigit(c)) digitCount++;
+                                else if (!char.IsWhiteSpace(c)) symbolCount++;
+                            }
+
+                            var ocrWords = ocrPageText.Split(new[] { ' ', '\r', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                            totalWords += ocrWords.Length;
+                            foreach (var w in ocrWords)
+                            {
+                                string cleanW = Regex.Replace(w, @"[^\w]", "");
+                                if (cleanW.Length >= 2 && CommonRecognizedWords.Contains(cleanW))
+                                {
+                                    recognizedWordHits++;
+                                }
+                                if (IsValidLinguisticWord(w))
+                                {
+                                    validWordCount++;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            scannedPages++;
+                            rawBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages} (IMAGEM ESCANEADA SEM TEXTO)] ---");
+                            rawBuilder.AppendLine();
+                            formattedBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages} (IMAGEM ESCANEADA SEM TEXTO)] ---");
+                            formattedBuilder.AppendLine();
+                        }
                     }
 
-                    // Analyze words and linguistic validity
-                    totalWords += words.Count;
-
-                    foreach (var word in words)
+                    if (hasVectorLetters)
                     {
-                        string cleanWord = Regex.Replace(word.Text, @"[^\w]", "");
-                        if (cleanWord.Length >= 2 && CommonRecognizedWords.Contains(cleanWord))
+                        // Raw text extraction for this page
+                        var pageRawText = string.Concat(letters.Select(l => l.Value));
+                        rawBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
+                        rawBuilder.AppendLine(pageRawText);
+                        rawBuilder.AppendLine();
+
+                        // Formatted layout text extraction
+                        pageFormattedText = ExtractFormattedPageText(words);
+                        formattedBuilder.AppendLine($"--- [PÁGINA {i} de {report.TotalPages}] ---");
+                        formattedBuilder.AppendLine(pageFormattedText);
+                        formattedBuilder.AppendLine();
+
+                        // Analyze characters on page
+                        foreach (var letter in letters)
                         {
-                            recognizedWordHits++;
+                            string val = letter.Value;
+                            foreach (char c in val)
+                            {
+                                totalLetters++;
+
+                                if (char.IsLetter(c))
+                                {
+                                    alphaCount++;
+                                }
+                                else if (char.IsDigit(c))
+                                {
+                                    digitCount++;
+                                }
+                                else if (!char.IsWhiteSpace(c))
+                                {
+                                    symbolCount++;
+                                }
+
+                                if (IsStrangeOrCorruptCharacter(c))
+                                {
+                                    strangeChars++;
+                                    if (strangeCharSet.Count < 10 && !char.IsWhiteSpace(c))
+                                    {
+                                        strangeCharSet.Add(c);
+                                    }
+                                }
+                            }
                         }
 
-                        if (IsValidLinguisticWord(word.Text))
+                        // Analyze words and linguistic validity
+                        totalWords += words.Count;
+
+                        foreach (var word in words)
                         {
-                            validWordCount++;
+                            string cleanWord = Regex.Replace(word.Text, @"[^\w]", "");
+                            if (cleanWord.Length >= 2 && CommonRecognizedWords.Contains(cleanWord))
+                            {
+                                recognizedWordHits++;
+                            }
+
+                            if (IsValidLinguisticWord(word.Text))
+                            {
+                                validWordCount++;
+                            }
                         }
                     }
 
@@ -495,6 +649,8 @@ namespace FtPdfLite.Services
                 report.MissingDebitLinesCount = debitLinesWithSingleAmountCount;
                 report.MissingDebitLineSamples = sampleMissingDebitLines;
                 report.ScannedPagesCount = scannedPages;
+                report.PagesWithUnderlyingTextCount = pagesWithUnderlyingText;
+                report.OcrRecognizedPagesCount = ocrRecognizedPages;
                 report.StrangeCharactersCount = strangeChars;
                 report.StrangeCharactersSamples = strangeCharSet.Select(c => $"'{c}' (U+{(int)c:X4})").ToList();
 
@@ -507,17 +663,27 @@ namespace FtPdfLite.Services
                 double validWordRatio = totalWords > 0 ? (double)validWordCount / totalWords : 0.0;
                 double avgCharsPerWord = totalWords > 0 ? (double)totalLetters / totalWords : 0.0;
 
+                bool isConvertedOrOcrDocument = 
+                    (pagesWithUnderlyingText > 0) || 
+                    (ocrRecognizedPages > 0) ||
+                    (report.OcrDiscoveredValues.Count > 0) || 
+                    (report.OcrDiscoveredHistories.Count > 0) ||
+                    (scannedPages > 0 && totalLetters >= 30);
+
                 bool isScannedDocument = false;
                 bool isScrambledOrEncrypted = false;
 
-                // 1. Check Scanned / Image PDF
-                if (report.TotalPages > 0 && scannedPages >= report.TotalPages)
+                // 1. Check Scanned / Image PDF puro (sem camada de texto digital e sem OCR)
+                if (totalLetters < 30 && ocrRecognizedPages == 0)
                 {
-                    isScannedDocument = true;
-                }
-                else if (totalLetters < 30 && totalImages > 0)
-                {
-                    isScannedDocument = true;
+                    if (report.TotalPages > 0 && scannedPages >= report.TotalPages)
+                    {
+                        isScannedDocument = true;
+                    }
+                    else if (totalImages > 0 && totalLetters < 20)
+                    {
+                        isScannedDocument = true;
+                    }
                 }
 
                 // 2. Check Scrambled / Obfuscated / Missing Font Encoding
@@ -555,11 +721,11 @@ namespace FtPdfLite.Services
                 {
                     report.IntegrityScore = 0.0;
                     report.IntegrityStatus = "0% - Não Legível";
-                    report.DocumentType = "Documento Escaneado (Imagem)";
-                    report.FormattingQuality = "Sem Texto Vetorial (Imagem)";
+                    report.DocumentType = "Documento Escaneado (Imagem Pura)";
+                    report.FormattingQuality = "Sem Texto Digital (Apenas Imagem)";
                     report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                     report.ImportVerdictColor = "#EF4444"; // Red
-                    report.DiagnosticWarnings.Add("Documento composto por imagens escaneadas sem camada de texto digital (necessita OCR).");
+                    report.DiagnosticWarnings.Add("Documento composto por imagens escaneadas sem camada de texto digital nem texto reconhecido (necessita OCR).");
                 }
                 else if (isScrambledOrEncrypted)
                 {
@@ -588,6 +754,90 @@ namespace FtPdfLite.Services
                     report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL";
                     report.ImportVerdictColor = "#EF4444";
                     report.DiagnosticWarnings.Add("Nenhum caractere de texto legível foi encontrado no arquivo.");
+                }
+                else if (isConvertedOrOcrDocument)
+                {
+                    report.IsImageWithUnderlyingTextOrOcr = true;
+
+                    double score = 75.0; // Base score de atenção para documento convertido/OCR
+                    if (strangeChars > 0)
+                    {
+                        double strangeRatio = (double)strangeChars / Math.Max(1, totalLetters);
+                        score -= Math.Min(25.0, strangeRatio * 300.0);
+                    }
+                    if (brokenLineCount > 0 && totalLines > 5)
+                    {
+                        double brokenRatio = (double)brokenLineCount / totalLines;
+                        if (brokenRatio > 0.35) score -= 10.0;
+                    }
+                    if (hasDetectedDiscrepancies)
+                    {
+                        score -= 15.0;
+                        report.HasAnomalousImages = true;
+                    }
+                    score = Math.Clamp(Math.Round(score, 1), 35.0, 75.0);
+
+                    report.IntegrityScore = score;
+                    report.IntegrityStatus = $"{score:0.0}% - Imagem c/ Texto (Arquivo Convertido)";
+                    report.DocumentType = pagesWithUnderlyingText > 0 
+                        ? "Arquivo Convertido (Imagem com Camada de Texto)" 
+                        : "Arquivo Convertido (Imagem com Texto Reconhecido por OCR)";
+                    report.FormattingQuality = pagesWithUnderlyingText > 0 
+                        ? "Camada de Texto por Baixo de Imagem" 
+                        : "Texto Reconhecido por OCR";
+                    report.ImportVerdict = "DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS";
+                    report.ImportVerdictColor = "#F59E0B"; // Yellow/Amber
+
+                    report.DiagnosticWarnings.Add("⚠️ Arquivo Convertido de Imagem com Camada de Texto/OCR: O documento é composto por imagem, mas possui texto por baixo ou texto reconhecido. Pode se tratar de um arquivo convertido. Caso não importe ou apresente erros nos valores ou outros campos, envie para a retaguarda.");
+
+                    if (scannedPages > 0)
+                    {
+                        report.DiagnosticWarnings.Add($"{scannedPages} de {report.TotalPages} página(s) são imagens puras sem texto.");
+                    }
+
+                    if (anomalousInlineImagesCount > 0)
+                    {
+                        double avgPerPg = report.TotalPages > 0 ? (double)totalImages / report.TotalPages : 0;
+                        report.DiagnosticWarnings.Add($"⚠️ Discrepância Estrutural Detectada: Foram encontradas {anomalousInlineImagesCount} imagens com dados no fluxo de texto/tabelas ({totalImages} imagens no total, média de {avgPerPg:0.0} por página).");
+                    }
+
+                    if (report.OcrDiscoveredValues.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredValues.Take(6).Select(v => $"\"{v}\""));
+                        report.DiagnosticWarnings.Add($"⚠️ OCR Identificou Valores Monetários em Figuras: Foram detectadas ocorrências de valores contábeis gravados como imagem (Exemplos: {samples}). Esses valores NÃO constam na camada de texto vetorial e podem ser omitidos na importação contábil.");
+                    }
+
+                    if (report.OcrDiscoveredHistories.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredHistories.Take(5).Select(h => $"\"{h}\""));
+                        report.DiagnosticWarnings.Add($"⚠️ OCR Identificou Históricos em Figuras: Foram detectadas descrições transacionais gravadas como imagem (Exemplos: {samples}).");
+                    }
+
+                    if (report.OcrDiscoveredHeaders.Count > 0)
+                    {
+                        string samples = string.Join(", ", report.OcrDiscoveredHeaders.Take(6).Select(h => $"\"{h}\""));
+                        report.DiagnosticWarnings.Add($"ℹ️ Rótulos de Cabeçalho em Figura: Rótulos/colunas detectados como imagem pelo OCR: {samples}.");
+                    }
+
+                    if (strangeChars > 0)
+                    {
+                        report.DiagnosticWarnings.Add($"Detectados {strangeChars} caractere(s) estranho(s) ou discrepantes.");
+                    }
+
+                    if (sampleDiscrepancies.Count > 0)
+                    {
+                        foreach (var sample in sampleDiscrepancies)
+                        {
+                            report.DiagnosticWarnings.Add($"Discrepância visual localizada: {sample}");
+                        }
+                    }
+
+                    if (isFinancialDoc && sampleMissingDebitLines.Count > 0)
+                    {
+                        report.DiagnosticWarnings.Add($"Exemplo de lançamento com valor ausente no texto: \"{sampleMissingDebitLines[0]}\"");
+                    }
+
+                    report.DiagnosticWarnings.Add("Orientação: Compare a visualização do PDF com o texto extraído no Bloco de Notas ao lado. Caso ocorram divergências na importação de valores ou outros campos, envie para a retaguarda ou solicite o documento em formato de dados (OFX, Excel/XLSX, CSV).");
                 }
                 else if (hasDetectedDiscrepancies)
                 {

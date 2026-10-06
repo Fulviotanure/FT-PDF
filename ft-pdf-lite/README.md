@@ -24,6 +24,15 @@ Versão ultraleve, rápida e minimalista do **FT PDF** focada exclusivamente em 
 
 ---
 
+## 📦 Versão 2.5.1
+- **Alerta de Arquivo Convertido**: Identificação clara de PDFs escaneados com camada de texto por baixo, orientando envio para a retaguarda em caso de inconsistência de valores.
+- **Feedback Visual de Abertura Imediato**: Overlay moderno com cálculo dinâmico do tamanho em MB, detecção de arquivo grande e barra de progresso.
+- **Abertura Fluida via Duplo Clique / Programa Padrão**: Renderização antecipada da interface gráfica no Windows, evitando a impressão de aplicativo travado ao abrir PDFs diretamente do explorer.
+- **Lazy Loading de Miniaturas de Páginas**: Carregamento instantâneo da primeira página em arquivos volumosos com painel lateral de miniaturas recolhido.
+- **OCR Otimizado para Arquivos Grandes**: Orçamento inteligente de OCR e barra de progresso em tempo real durante a análise.
+
+---
+
 ## 📦 Versão 2.5.0
 - **Mini Inteligência OCR Nativa (Windows Media OCR)**: Inspeção inteligente de imagens embutidas em alta performance sem dependências externas (0 MB de peso extra).
 - **Classificação Precisa de Elementos Visuais**: Diferenciação automática entre valores monetários, históricos transacionais, cabeçalhos de tabela e logotipos institucionais.

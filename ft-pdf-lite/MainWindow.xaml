@@ -487,6 +487,36 @@
                         <WindowsFormsHost x:Name="SplitPdfHost" Grid.Row="1" Background="#13182B" />
                     </Grid>
                 </Grid>
+
+                <!-- Opening File Overlay (Immediate feedback for large / loading files) -->
+                <Grid x:Name="PanelOpeningFeedback" Visibility="Collapsed" Background="#D90A0F1D" 
+                      VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Panel.ZIndex="999">
+                    <Border Background="#131D31" BorderBrush="#3B82F6" BorderThickness="1.5" CornerRadius="14"
+                            Padding="28,24" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#000000" BlurRadius="28" ShadowDepth="6" Opacity="0.6"/>
+                        </Border.Effect>
+                        <StackPanel HorizontalAlignment="Center">
+                            <Border Width="56" Height="56" CornerRadius="16" Background="#1E293B" 
+                                    BorderBrush="#38BDF8" BorderThickness="1.5" HorizontalAlignment="Center" Margin="0,0,0,16">
+                                <TextBlock x:Name="TxtOpeningIcon" Text="⏳" FontSize="26" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+
+                            <TextBlock x:Name="TxtOpeningTitle" Text="Carregando Arquivo PDF..." FontSize="16" FontWeight="Bold" 
+                                       Foreground="#F8FAFC" HorizontalAlignment="Center" Margin="0,0,0,6" TextAlignment="Center"/>
+
+                            <TextBlock x:Name="TxtOpeningDetail" Text="Arquivo grande detectado. Otimizando leitura e preparando visualização rápida..." 
+                                       FontSize="12.5" Foreground="#94A3B8" TextAlignment="Center" 
+                                       TextWrapping="Wrap" Margin="0,0,0,18" LineHeight="17" HorizontalAlignment="Center"/>
+
+                            <ProgressBar x:Name="ProgressBarOpening" IsIndeterminate="True" Height="4" 
+                                         Background="#0F172A" Foreground="#38BDF8" BorderThickness="0" Margin="0,0,0,10"/>
+
+                            <TextBlock x:Name="TxtOpeningBadge" Text="FT PDF Lite • Leitura Vetorial de Alta Performance" 
+                                       FontSize="10.5" Foreground="#64748B" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Grid>
 
             <!-- Grid Splitter for Resizing Validation Panel -->

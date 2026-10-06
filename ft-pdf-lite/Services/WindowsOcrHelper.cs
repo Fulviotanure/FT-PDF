@@ -63,14 +63,28 @@ namespace FtPdfLite.Services
                 var decoder = await BitmapDecoder.CreateAsync(stream);
                 var softwareBitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
 
-                // Windows.Media.Ocr requer largura e altura entre 40 e 10.000 pixels
-                if (softwareBitmap.PixelWidth < 40 || softwareBitmap.PixelHeight < 40)
+                // Windows.Media.Ocr requer largura e altura entre 40 e 10.000 pixels.
+                // Redimensionamos imagens muito pequenas (< 40px) ou excessivamente pesadas (> 2600px) para máxima performance e precisão.
+                if (softwareBitmap.PixelWidth < 40 || softwareBitmap.PixelHeight < 40 ||
+                    softwareBitmap.PixelWidth > 2600 || softwareBitmap.PixelHeight > 2600)
                 {
                     using var srcMs = new MemoryStream(imageBytes);
                     using var originalBmp = new System.Drawing.Bitmap(srcMs);
 
-                    int targetW = Math.Max(originalBmp.Width * 4, 80);
-                    int targetH = Math.Max(originalBmp.Height * 4, 80);
+                    int targetW = originalBmp.Width;
+                    int targetH = originalBmp.Height;
+
+                    if (targetW < 40 || targetH < 40)
+                    {
+                        targetW = Math.Max(targetW * 4, 80);
+                        targetH = Math.Max(targetH * 4, 80);
+                    }
+                    else if (targetW > 2400 || targetH > 2400)
+                    {
+                        double scale = Math.Min(2400.0 / targetW, 2400.0 / targetH);
+                        targetW = Math.Max(40, (int)(targetW * scale));
+                        targetH = Math.Max(40, (int)(targetH * scale));
+                    }
 
                     using var scaledBmp = new System.Drawing.Bitmap(targetW, targetH);
                     using (var g = System.Drawing.Graphics.FromImage(scaledBmp))

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using FtPdfLite.Models;
 using FtPdfLite.Services;
 using PdfiumViewer;
@@ -282,13 +283,15 @@ namespace FtPdfLite
             }
         }
 
-        private void CheckCommandLineArgs()
+        private async void CheckCommandLineArgs()
         {
             try
             {
                 var args = Environment.GetCommandLineArgs();
                 if (args.Length > 1)
                 {
+                    // Permite que a janela principal finalize sua renderização inicial antes de abrir arquivos pesados
+                    await Dispatcher.Yield(DispatcherPriority.Loaded);
                     for (int i = 1; i < args.Length; i++)
                     {
                         string raw = args[i].Trim('"', ' ');
@@ -642,12 +645,11 @@ namespace FtPdfLite
         {
             try
             {
-                if (tab.PdfDoc == null)
+                if (tab.PdfDoc == null && File.Exists(tab.FilePath))
                 {
-                    tab.PdfDoc = await Task.Run(() => 
-                        !string.IsNullOrEmpty(tab.Password) 
-                            ? PdfDocument.Load(tab.FilePath, tab.Password) 
-                            : PdfDocument.Load(tab.FilePath));
+                    tab.PdfDoc = !string.IsNullOrEmpty(tab.Password) 
+                        ? PdfDocument.Load(tab.FilePath, tab.Password) 
+                        : PdfDocument.Load(tab.FilePath);
                     if (tab.PdfDoc == null) return;
                     tab.TotalPages = tab.PdfDoc.PageCount;
                 }
@@ -742,6 +744,44 @@ namespace FtPdfLite
                 if (string.IsNullOrWhiteSpace(filePath))
                     return;
 
+                OpenFileAsync(filePath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Erro ao abrir arquivo:\n{ex.Message}", "Falha", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void ShowOpeningFeedback(string fileName, double sizeMb, bool isLarge)
+        {
+            if (PanelOpeningFeedback == null) return;
+            if (isLarge)
+            {
+                TxtOpeningIcon.Text = "📁";
+                TxtOpeningTitle.Text = $"Abrindo Arquivo Grande ({sizeMb:0.1} MB)...";
+                TxtOpeningDetail.Text = $"Detectado documento extenso: \"{fileName}\". Otimizando leitura e preparando visualização rápida de páginas...";
+            }
+            else
+            {
+                TxtOpeningIcon.Text = "⏳";
+                TxtOpeningTitle.Text = $"Abrindo {fileName}...";
+                TxtOpeningDetail.Text = "Carregando páginas e preparando visualização vetorial nativa...";
+            }
+            PanelOpeningFeedback.Visibility = Visibility.Visible;
+            Mouse.OverrideCursor = Cursors.Wait;
+        }
+
+        private void HideOpeningFeedback()
+        {
+            if (PanelOpeningFeedback == null) return;
+            PanelOpeningFeedback.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+        }
+
+        private async void OpenFileAsync(string filePath)
+        {
+            try
+            {
                 // Verifica se há novas versões disponíveis ao abrir um arquivo para leitura
                 _ = UpdateService.CheckForUpdatesAndPromptAsync(isLite: true, this, isStartup: false);
 
@@ -774,6 +814,14 @@ namespace FtPdfLite
                     return;
                 }
 
+                // Verificar tamanho e exibir feedback visual imediato
+                var fi = new FileInfo(filePath);
+                double sizeMb = fi.Length / (1024.0 * 1024.0);
+                bool isLarge = sizeMb >= 5.0;
+
+                ShowOpeningFeedback(fi.Name, sizeMb, isLarge);
+                await Dispatcher.Yield(DispatcherPriority.Render);
+
                 // Tenta abrir o documento para verificar integridade e detecção de senha
                 PdfDocument? initialDoc = null;
                 string? password = null;
@@ -784,6 +832,7 @@ namespace FtPdfLite
                 }
                 catch (PdfException pex) when (pex.Error == PdfError.PasswordProtected || pex.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
+                    HideOpeningFeedback();
                     var dlg = new PasswordPromptDialog(filePath);
                     if (this.IsLoaded && this.IsVisible)
                     {
@@ -802,6 +851,7 @@ namespace FtPdfLite
                 }
                 catch (Exception ex)
                 {
+                    HideOpeningFeedback();
                     if (this.IsLoaded && this.IsVisible)
                     {
                         MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -812,24 +862,39 @@ namespace FtPdfLite
                     }
                     return;
                 }
+                finally
+                {
+                    HideOpeningFeedback();
+                }
 
+                int totalPages = initialDoc?.PageCount ?? 1;
                 var tab = new PdfDocumentTab
                 {
                     FilePath = filePath,
                     Password = password,
                     PdfDoc = initialDoc,
-                    TotalPages = initialDoc?.PageCount ?? 1
+                    TotalPages = totalPages
                 };
 
                 _tabs.Add(tab);
                 SetActiveTab(tab);
 
-                ShowAnalyzingFeedback();
+                ShowAnalyzingFeedback(isLarge, sizeMb, totalPages);
 
-                // Run extraction & integrity analysis in background
+                // Run extraction & integrity analysis in background with live progress updates
                 _ = Task.Run(() =>
                 {
-                    var result = _extractionService.ExtractAndAnalyze(filePath, password);
+                    var result = _extractionService.ExtractAndAnalyze(filePath, password, progress =>
+                    {
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            if (_activeTab == tab && tab.Extraction == null)
+                            {
+                                UpdateAnalysisProgress(progress);
+                            }
+                        });
+                    });
+
                     Dispatcher.Invoke(() =>
                     {
                         tab.Extraction = result;
@@ -845,6 +910,7 @@ namespace FtPdfLite
             }
             catch (Exception ex)
             {
+                HideOpeningFeedback();
                 MessageBox.Show(this, $"Erro ao abrir o arquivo PDF:\n{ex.Message}", "Falha na Leitura", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
@@ -873,29 +939,38 @@ namespace FtPdfLite
             _ = LoadAndRenderTab(tab, isSplit: false);
             UpdateNotepadView();
             UpdatePageCards();
-            StartThumbnailGeneration(tab);
+            if (_isPageSidebarOpen || tab.TotalPages <= 5)
+            {
+                StartThumbnailGeneration(tab);
+            }
         }
 
         private void CloseTab(PdfDocumentTab tab)
         {
+            _thumbnailCts?.Cancel();
             int index = _tabs.IndexOf(tab);
-            tab.Dispose();
-            _tabs.Remove(tab);
 
             if (_activeTab == tab)
             {
-                if (_tabs.Count > 0)
+                if (_tabs.Count > 1)
                 {
-                    int newIndex = Math.Clamp(index - 1, 0, _tabs.Count - 1);
-                    SetActiveTab(_tabs[newIndex]);
+                    int newIndex = (index == 0) ? 1 : index - 1;
+                    var nextTab = _tabs[newIndex];
+                    _tabs.Remove(tab);
+                    SetActiveTab(nextTab);
+                    tab.Dispose();
                 }
                 else
                 {
+                    _tabs.Remove(tab);
+                    tab.Dispose();
                     CloseAllDocuments();
                 }
             }
             else
             {
+                _tabs.Remove(tab);
+                tab.Dispose();
                 UpdateTabsBar();
             }
         }
@@ -1439,18 +1514,27 @@ namespace FtPdfLite
 
         private void UpdatePageCards()
         {
-            PanelPageCards.Children.Clear();
-            _pageImageMap.Clear();
-            _pageCardMap.Clear();
-
             if (_activeTab == null || _activeTab.TotalPages <= 0)
             {
                 TxtPageCountBadge.Text = "0 pág.";
+                PanelPageCards.Children.Clear();
+                _pageImageMap.Clear();
+                _pageCardMap.Clear();
                 return;
             }
 
             int total = _activeTab.TotalPages;
             TxtPageCountBadge.Text = $"{total} pág.";
+
+            // Otimização: se a barra lateral de páginas estiver fechada, não gasta processamento construindo dezenas de controles
+            if (!_isPageSidebarOpen && total > 5)
+            {
+                return;
+            }
+
+            PanelPageCards.Children.Clear();
+            _pageImageMap.Clear();
+            _pageCardMap.Clear();
 
             for (int i = 1; i <= total; i++)
             {
@@ -1553,47 +1637,53 @@ namespace FtPdfLite
             }
         }
 
-        private void StartThumbnailGeneration(PdfDocumentTab tab)
+        private async void StartThumbnailGeneration(PdfDocumentTab tab)
         {
             _thumbnailCts?.Cancel();
             _thumbnailCts = new CancellationTokenSource();
             var token = _thumbnailCts.Token;
 
-            Task.Run(() =>
+            try
             {
-                try
+                if (tab.PdfDoc == null && File.Exists(tab.FilePath))
                 {
-                    if (!File.Exists(tab.FilePath)) return;
-                    using var doc = !string.IsNullOrEmpty(tab.Password)
-                        ? PdfiumViewer.PdfDocument.Load(tab.FilePath, tab.Password)
-                        : PdfiumViewer.PdfDocument.Load(tab.FilePath);
-                    int total = doc.PageCount;
-
-                    for (int i = 0; i < total; i++)
+                    try
                     {
-                        if (token.IsCancellationRequested) break;
+                        tab.PdfDoc = !string.IsNullOrEmpty(tab.Password)
+                            ? PdfiumViewer.PdfDocument.Load(tab.FilePath, tab.Password)
+                            : PdfiumViewer.PdfDocument.Load(tab.FilePath);
+                        if (tab.PdfDoc != null) tab.TotalPages = tab.PdfDoc.PageCount;
+                    }
+                    catch { }
+                }
 
-                        int pageNum = i + 1;
-                        if (!tab.Thumbnails.ContainsKey(pageNum))
+                if (tab.PdfDoc == null) return;
+                int total = tab.PdfDoc.PageCount;
+
+                for (int i = 0; i < total; i++)
+                {
+                    if (token.IsCancellationRequested || _activeTab != tab || tab.PdfDoc == null) break;
+
+                    int pageNum = i + 1;
+                    if (!tab.Thumbnails.ContainsKey(pageNum))
+                    {
+                        var bs = PdfThumbnailService.RenderPageThumbnail(tab.PdfDoc, i, dpi: 96);
+                        if (bs != null)
                         {
-                            var bs = PdfThumbnailService.RenderPageThumbnail(doc, i, dpi: 96);
-                            if (bs != null)
-                            {
-                                tab.Thumbnails[pageNum] = bs;
+                            tab.Thumbnails[pageNum] = bs;
 
-                                Dispatcher.Invoke(() =>
-                                {
-                                    if (_activeTab == tab && _pageImageMap.TryGetValue(pageNum, out var imgCtrl))
-                                    {
-                                        imgCtrl.Source = bs;
-                                    }
-                                });
+                            if (_activeTab == tab && _pageImageMap.TryGetValue(pageNum, out var imgCtrl))
+                            {
+                                imgCtrl.Source = bs;
                             }
                         }
                     }
+
+                    // Permite que o loop de mensagens processe cliques, scroll e renderização suavemente
+                    await Task.Yield();
                 }
-                catch { }
-            }, token);
+            }
+            catch { }
         }
 
         private void UpdatePageCardsHighlight()
@@ -1644,25 +1734,52 @@ namespace FtPdfLite
 
         #region Validation & Notepad Panel
 
-        private void ShowAnalyzingFeedback()
+        private void ShowAnalyzingFeedback(bool isLargeFile = false, double sizeMb = 0, int totalPages = 0)
         {
             BadgeAnalysisLoading.Visibility = Visibility.Visible;
             ProgressBarAnalysis.Visibility = Visibility.Visible;
+            ProgressBarAnalysis.IsIndeterminate = true;
 
-            TxtHeaderDocType.Text = "Analisando Documento...";
-            TxtHeaderDocType.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
+            if (isLargeFile)
+            {
+                TxtHeaderDocType.Text = $"Analisando Arquivo Grande ({sizeMb:0.1} MB)...";
+                TxtHeaderDocType.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
 
-            BadgeIntegrity.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
-            BadgeIntegrity.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
-            TxtIntegrityScore.Text = "Em Análise...";
-            TxtIntegrityScore.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
-            TxtIntegrityStatusText.Text = "Inspecionando Camadas";
+                BadgeIntegrity.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+                BadgeIntegrity.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+                TxtIntegrityScore.Text = "Otimizando...";
+                TxtIntegrityScore.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+                TxtIntegrityStatusText.Text = totalPages > 0 ? $"{totalPages} Páginas" : "Arquivo Extenso";
 
-            BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
-            BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
-            TxtImportVerdictIcon.Text = "⏳";
-            TxtImportVerdict.Text = "ANALISANDO ESTRUTURA DO PDF...";
-            TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+                TxtImportVerdictIcon.Text = "⚡";
+                TxtImportVerdict.Text = "ARQUIVO GRANDE — ANÁLISE EM SEGUNDO PLANO...";
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+
+                TxtDiagWarning.Text = $"Arquivo grande detectado ({sizeMb:0.1} MB{(totalPages > 0 ? $" / {totalPages} páginas" : "")}). O documento já está pronto para leitura enquanto a integridade estrutural e OCR são validados.";
+                TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+            }
+            else
+            {
+                TxtHeaderDocType.Text = "Analisando Documento...";
+                TxtHeaderDocType.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#60A5FA"));
+
+                BadgeIntegrity.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+                BadgeIntegrity.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+                TxtIntegrityScore.Text = "Em Análise...";
+                TxtIntegrityScore.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+                TxtIntegrityStatusText.Text = totalPages > 0 ? $"{totalPages} Páginas" : "Inspecionando Camadas";
+
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#172554"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3B82F6"));
+                TxtImportVerdictIcon.Text = "⏳";
+                TxtImportVerdict.Text = "ANALISANDO ESTRUTURA DO PDF...";
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+
+                TxtDiagWarning.Text = "Aguarde enquanto o FT PDF Lite valida a integridade do texto e analisa elementos visuais...";
+                TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
+            }
 
             BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#0F172A"));
             BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1E293B"));
@@ -1675,12 +1792,33 @@ namespace FtPdfLite
             TxtDiagImages.Text = "Imagens: Analisando...";
             TxtDiagScannedPages.Text = "Páginas Escaneadas: ...";
             TxtDiagCharCount.Text = "Total de Caracteres: ...";
-            TxtDiagWarning.Text = "Aguarde enquanto o FT PDF Lite valida a integridade do texto e analisa elementos visuais...";
-            TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#93C5FD"));
 
-            TxtEditor.Text = "[Extraindo texto vetorial e analisando conteúdo do documento...]";
+            TxtEditor.Text = "[Extraindo texto vetorial e analisando conteúdo do documento em segundo plano...]";
             TxtEditorStats.Text = "Analisando...";
             TxtEditorMode.Text = "Modo: Verificando";
+        }
+
+        private void UpdateAnalysisProgress(ExtractionProgressInfo progress)
+        {
+            if (progress.TotalPages > 0 && progress.CurrentPage > 0)
+            {
+                ProgressBarAnalysis.IsIndeterminate = false;
+                ProgressBarAnalysis.Maximum = progress.TotalPages;
+                ProgressBarAnalysis.Value = progress.CurrentPage;
+
+                int pct = (int)Math.Round((progress.CurrentPage * 100.0) / progress.TotalPages);
+                TxtIntegrityScore.Text = $"{pct}% Analisado";
+                TxtIntegrityStatusText.Text = $"Pág. {progress.CurrentPage} de {progress.TotalPages}";
+
+                TxtHeaderDocType.Text = progress.IsLargeFile 
+                    ? $"Analisando Arquivo Grande ({progress.CurrentPage}/{progress.TotalPages})..."
+                    : $"Analisando ({progress.CurrentPage}/{progress.TotalPages})...";
+            }
+
+            if (!string.IsNullOrWhiteSpace(progress.StatusMessage))
+            {
+                TxtDiagWarning.Text = progress.StatusMessage;
+            }
         }
 
         private void HideAnalyzingFeedback()
@@ -1695,7 +1833,9 @@ namespace FtPdfLite
 
             if (_activeTab.Extraction == null)
             {
-                ShowAnalyzingFeedback();
+                var fi = File.Exists(_activeTab.FilePath) ? new FileInfo(_activeTab.FilePath) : null;
+                double sizeMb = (fi?.Length ?? 0) / (1024.0 * 1024.0);
+                ShowAnalyzingFeedback(sizeMb >= 5.0, sizeMb, _activeTab.TotalPages);
                 return;
             }
 
@@ -1750,10 +1890,23 @@ namespace FtPdfLite
             bool isUnimportableOrDataLoss = report.ImportVerdict.StartsWith("DOCUMENTO NÃO IMPORTÁVEL", StringComparison.OrdinalIgnoreCase) ||
                                            report.HasAnomalousImages ||
                                            report.OcrDiscoveredValues.Count > 0 ||
-                                           report.ScannedPagesCount > 0 ||
+                                           (report.ScannedPagesCount > 0 && report.TotalCharacters < 30) ||
                                            report.IntegrityScore < 60;
 
-            if (isUnimportableOrDataLoss)
+            if (report.IsImageWithUnderlyingTextOrOcr)
+            {
+                TxtImportVerdictIcon.Text = "⚠️";
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3D3215"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F59E0B"));
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCD34D"));
+
+                BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#292210"));
+                BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B45309"));
+                TxtRetaguardaNoticeIcon.Text = "⚠️";
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE68A"));
+                TxtRetaguardaNotice.Text = "Atenção: pode ser um arquivo convertido. Caso não importe ou tenha erros nos valores ou outros campos, envie para a retaguarda.";
+            }
+            else if (isUnimportableOrDataLoss)
             {
                 TxtImportVerdictIcon.Text = "⛔";
                 BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E1C1E"));
@@ -1803,14 +1956,25 @@ namespace FtPdfLite
                 TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0} (⚠️ {report.AnomalousInlineImagesCount} no texto)";
                 TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FB923C"));
             }
+            else if (report.IsImageWithUnderlyingTextOrOcr)
+            {
+                TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0} (⚠️ Camada OCR)";
+                TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FBBF24"));
+            }
             else
             {
                 TxtDiagImages.Text = $"Imagens: {report.TotalImagesFound:N0}";
                 TxtDiagImages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E2E8F0"));
             }
 
-            // Páginas Escaneadas (SEPARADO!)
-            if (report.ScannedPagesCount > 0)
+            // Páginas Escaneadas / Convertidas
+            if (report.PagesWithUnderlyingTextCount > 0 || report.OcrRecognizedPagesCount > 0)
+            {
+                int convertedCount = report.PagesWithUnderlyingTextCount + report.OcrRecognizedPagesCount;
+                TxtDiagScannedPages.Text = $"Pág. Convertidas (OCR): {convertedCount} de {report.TotalPages}";
+                TxtDiagScannedPages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FBBF24"));
+            }
+            else if (report.ScannedPagesCount > 0)
             {
                 TxtDiagScannedPages.Text = $"Pág. Escaneadas: {report.ScannedPagesCount} de {report.TotalPages}";
                 TxtDiagScannedPages.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
@@ -1834,7 +1998,7 @@ namespace FtPdfLite
             if (report.DiagnosticWarnings.Count > 0)
             {
                 TxtDiagWarning.Text = "• " + string.Join("\n\n• ", report.DiagnosticWarnings);
-                if (report.HasAnomalousImages)
+                if (report.HasAnomalousImages || report.IsImageWithUnderlyingTextOrOcr)
                 {
                     TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDBA74"));
                 }
