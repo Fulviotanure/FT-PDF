@@ -2,7 +2,7 @@
 ; Cria o instalador oficial para Windows com registro de programa padrão e atalhos
 
 #define MyAppName "FT PDF Lite"
-#define MyAppVersion "2.5.1"
+#define MyAppVersion "2.5.2"
 #define MyAppPublisher "Fulvio Tanure"
 #define MyAppURL "https://github.com/Fulviotanure/ft-pdf"
 #define MyAppExeName "FtPdfLite.exe"

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
@@ -1889,6 +1890,7 @@ namespace FtPdfLite
 
             bool isUnimportableOrDataLoss = report.ImportVerdict.StartsWith("DOCUMENTO NÃO IMPORTÁVEL", StringComparison.OrdinalIgnoreCase) ||
                                            report.HasAnomalousImages ||
+                                           report.HasVectorCurvedLabels ||
                                            report.OcrDiscoveredValues.Count > 0 ||
                                            (report.ScannedPagesCount > 0 && report.TotalCharacters < 30) ||
                                            report.IntegrityScore < 60;
@@ -1905,6 +1907,19 @@ namespace FtPdfLite
                 TxtRetaguardaNoticeIcon.Text = "⚠️";
                 TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FDE68A"));
                 TxtRetaguardaNotice.Text = "Atenção: pode ser um arquivo convertido. Caso não importe ou tenha erros nos valores ou outros campos, envie para a retaguarda.";
+            }
+            else if (report.HasVectorCurvedLabels)
+            {
+                TxtImportVerdictIcon.Text = "⛔";
+                BorderImportVerdict.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3E1C1E"));
+                BorderImportVerdict.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#EF4444"));
+                TxtImportVerdict.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FCA5A5"));
+
+                BorderRetaguardaNotice.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2B1517"));
+                BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#991B1B"));
+                TxtRetaguardaNoticeIcon.Text = "⛔";
+                TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FECACA"));
+                TxtRetaguardaNotice.Text = "Atenção: o texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente. Informe o cliente sobre a possibilidade e envie para a retaguarda.";
             }
             else if (isUnimportableOrDataLoss)
             {

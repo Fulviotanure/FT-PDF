@@ -24,6 +24,13 @@ Versão ultraleve, rápida e minimalista do **FT PDF** focada exclusivamente em 
 
 ---
 
+## 📦 Versão 2.5.2
+- **Diagnóstico de Rótulos em Curvas Vetoriais**: Identificação avançada de cabeçalhos e rótulos bancários (ex: comprovantes Santander) desenhados puramente como vetores/curvas Bézier, os quais não possuem texto digital extraível.
+- **Veredito Claro de Inviabilidade Técnica**: Quando detectada perda de dados estruturais críticos, o documento é classificado com score de 35% e recebe o alerta: *"Atenção: o texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente. Informe o cliente sobre a possibilidade e envie para a retaguarda."*
+- **Auditoria de Integridade Estrutural em Tempo Recorde**: Renderização e reconhecimento por OCR nativo da página inicial em menos de 0,7s, sem botão de cópia de OCR e sem poluir o fluxo do usuário.
+
+---
+
 ## 📦 Versão 2.5.1
 - **Alerta de Arquivo Convertido**: Identificação clara de PDFs escaneados com camada de texto por baixo, orientando envio para a retaguarda em caso de inconsistência de valores.
 - **Feedback Visual de Abertura Imediato**: Overlay moderno com cálculo dinâmico do tamanho em MB, detecção de arquivo grande e barra de progresso.

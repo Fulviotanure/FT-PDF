@@ -8,11 +8,22 @@ using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
 using Windows.Storage.Streams;
 using System.Runtime.InteropServices.WindowsRuntime;
+using PdfiumViewer;
+using UglyToad.PdfPig.Content;
 
 namespace FtPdfLite.Services
 {
     public static class WindowsOcrHelper
     {
+        private static readonly HashSet<string> StructuralFieldLabels = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "valor", "identificação", "identificacao", "pagamento", "vencimento",
+            "receber", "desconto", "abatimento", "juros", "multa", "chave",
+            "instituição", "instituicao", "transação", "transacao", "autenticação",
+            "autenticacao", "beneficiário", "beneficiario", "pagador", "recebedor",
+            "cedente", "sacado", "emissão", "emissao", "fatura", "total", "saldo",
+            "documento", "agência", "agencia", "conta", "operação", "operacao"
+        };
         private static readonly Lazy<OcrEngine?> _ocrEngine = new(() =>
         {
             try
@@ -47,6 +58,73 @@ namespace FtPdfLite.Services
             {
                 return null;
             }
+        }
+
+        public static string? RecognizePdfPage(PdfDocument doc, int pageIndex, int dpi = 250)
+        {
+            if (!IsAvailable || doc == null || pageIndex < 0 || pageIndex >= doc.PageCount) return null;
+            try
+            {
+                var size = doc.PageSizes[pageIndex];
+                int targetDpi = dpi;
+                double maxDim = Math.Max(size.Width, size.Height);
+                if (maxDim > 0 && (maxDim * targetDpi / 72.0) > 2400)
+                {
+                    targetDpi = (int)(2400.0 * 72.0 / maxDim);
+                }
+
+                int w = Math.Max(40, (int)(size.Width * targetDpi / 72.0));
+                int h = Math.Max(40, (int)(size.Height * targetDpi / 72.0));
+
+                using var img = doc.Render(pageIndex, w, h, targetDpi, targetDpi, PdfRenderFlags.Annotations);
+                using var ms = new MemoryStream();
+                img.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                return RecognizeText(ms.ToArray());
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static List<string> DetectMissingStructuralLabels(string? ocrText, IEnumerable<Letter>? letters, IEnumerable<string>? nativeWordTexts)
+        {
+            var missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(ocrText)) return missing;
+
+            var nativeWordSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (nativeWordTexts != null)
+            {
+                foreach (var text in nativeWordTexts)
+                {
+                    string clean = Regex.Replace(text, @"[^\p{L}]", "").Trim();
+                    if (!string.IsNullOrEmpty(clean)) nativeWordSet.Add(clean);
+                }
+            }
+
+            string fullNativeText = letters != null ? string.Concat(letters.Select(l => l.Value)) : string.Empty;
+
+            var matches = Regex.Matches(ocrText, @"[\p{L}]+");
+            foreach (Match m in matches)
+            {
+                string word = m.Value;
+                if (word.Length < 3) continue;
+
+                if (StructuralFieldLabels.Contains(word))
+                {
+                    if (!nativeWordSet.Contains(word) &&
+                        fullNativeText.IndexOf(word, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        string displayLabel = char.ToUpperInvariant(word[0]) + (word.Length > 1 ? word.Substring(1).ToLowerInvariant() : "");
+                        if (!missing.Any(x => x.Equals(displayLabel, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            missing.Add(displayLabel);
+                        }
+                    }
+                }
+            }
+
+            return missing;
         }
 
         private static async Task<string?> RecognizeTextInternalAsync(byte[] imageBytes)

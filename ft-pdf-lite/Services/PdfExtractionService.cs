@@ -59,6 +59,8 @@ namespace FtPdfLite.Services
         public bool IsImageWithUnderlyingTextOrOcr { get; set; }
         public int PagesWithUnderlyingTextCount { get; set; }
         public int OcrRecognizedPagesCount { get; set; }
+        public bool HasVectorCurvedLabels { get; set; }
+        public List<string> VectorCurvedLabelSamples { get; set; } = new();
     }
 
     public class ExtractionProgressInfo
@@ -581,6 +583,33 @@ namespace FtPdfLite.Services
                                 validWordCount++;
                             }
                         }
+
+                        // Auditoria de Rótulos Estruturais / Vetorizados em Curvas Bézier (Página 1)
+                        if (i == 1 && WindowsOcrHelper.IsAvailable && !isLargeFile)
+                        {
+                            try
+                            {
+                                NativePdfiumHelper.Initialize();
+                                using var pdfiumDoc = PdfiumViewer.PdfDocument.Load(filePath, password);
+                                if (pdfiumDoc != null && pdfiumDoc.PageCount > 0)
+                                {
+                                    string? page1Ocr = WindowsOcrHelper.RecognizePdfPage(pdfiumDoc, 0, 300);
+                                    if (!string.IsNullOrWhiteSpace(page1Ocr))
+                                    {
+                                        var missingLabels = WindowsOcrHelper.DetectMissingStructuralLabels(page1Ocr, letters, words.Select(w => w.Text));
+                                        if (missingLabels.Count >= 2 || (missingLabels.Count >= 1 && missingLabels.Any(l => l.Equals("Valor", StringComparison.OrdinalIgnoreCase))))
+                                        {
+                                            report.HasVectorCurvedLabels = true;
+                                            report.VectorCurvedLabelSamples = missingLabels;
+                                        }
+                                    }
+                                }
+                            }
+                            catch
+                            {
+                                // Falha segura se Pdfium não carregar ou falhar
+                            }
+                        }
                     }
 
                     var lines = pageFormattedText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -954,7 +983,22 @@ namespace FtPdfLite.Services
                     report.IntegrityScore = score;
 
                     // Set Import Verdict based on Score: strictly < 100% triggers attention/warning
-                    if (score >= 100.0)
+                    if (report.HasVectorCurvedLabels)
+                    {
+                        score = 35.0;
+                        report.IntegrityScore = score;
+                        report.IntegrityStatus = $"{score:0.0}% - Perda de Informações Importantes";
+                        report.DocumentType = "Texto Híbrido (Cabeçalhos em Curvas / Dados Faltantes)";
+                        report.FormattingQuality = "Perda de Dados Estruturais / Inviável";
+                        report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL (PERDA DE DADOS)";
+                        report.ImportVerdictColor = "#EF4444"; // Red
+
+                        string labelSamples = string.Join(", ", report.VectorCurvedLabelSamples.Take(6).Select(l => $"\"{l}\""));
+                        report.DiagnosticWarnings.Insert(0, $"⛔ Perda de Informações Importantes: O documento teve perda de informações essenciais (rótulos e cabeçalhos como {labelSamples} foram desenhados como curvas geométricas Bézier e não existem como texto digital).");
+                        report.DiagnosticWarnings.Add("⚠️ Inviabilidade Técnica: O texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente para processamento ou importação automatizada.");
+                        report.DiagnosticWarnings.Add("Orientação: Informe o cliente sobre a possibilidade e envie para a retaguarda.");
+                    }
+                    else if (score >= 100.0)
                     {
                         report.IntegrityStatus = "100% - Integridade Perfeita";
                         report.DocumentType = "Texto Vetorial Nativo";
