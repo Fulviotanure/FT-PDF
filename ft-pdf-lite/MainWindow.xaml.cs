@@ -1919,7 +1919,14 @@ namespace FtPdfLite
                 BorderRetaguardaNotice.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#991B1B"));
                 TxtRetaguardaNoticeIcon.Text = "⛔";
                 TxtRetaguardaNotice.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FECACA"));
-                TxtRetaguardaNotice.Text = "Atenção: o texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente. Informe o cliente sobre a possibilidade e envie para a retaguarda.";
+                if (report.VectorCurvedValueSamples.Count > 0)
+                {
+                    TxtRetaguardaNotice.Text = "Atenção: valores e lançamentos contábeis foram impressos em curvas/desenho e não existem no texto. Documento inviável para importação.";
+                }
+                else
+                {
+                    TxtRetaguardaNotice.Text = "Atenção: o texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente. Informe o cliente sobre a possibilidade e envie para a retaguarda.";
+                }
             }
             else if (isUnimportableOrDataLoss)
             {

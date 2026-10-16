@@ -61,6 +61,9 @@ namespace FtPdfLite.Services
         public int OcrRecognizedPagesCount { get; set; }
         public bool HasVectorCurvedLabels { get; set; }
         public List<string> VectorCurvedLabelSamples { get; set; } = new();
+        public bool HasVectorCurvedValuesOrLoss { get; set; }
+        public List<string> VectorCurvedValueSamples { get; set; } = new();
+        public List<string> VectorCurvedWordSamples { get; set; } = new();
     }
 
     public class ExtractionProgressInfo
@@ -584,23 +587,29 @@ namespace FtPdfLite.Services
                             }
                         }
 
-                        // Auditoria de Rótulos Estruturais / Vetorizados em Curvas Bézier (Página 1)
-                        if (i == 1 && WindowsOcrHelper.IsAvailable && !isLargeFile)
+                        // Auditoria de Rótulos Estruturais e Dados em Curvas Bézier (Páginas 1 ou 2)
+                        if ((i == 1 || (i == 2 && !report.HasVectorCurvedLabels)) && WindowsOcrHelper.IsAvailable && !isLargeFile)
                         {
                             try
                             {
                                 NativePdfiumHelper.Initialize();
                                 using var pdfiumDoc = PdfiumViewer.PdfDocument.Load(filePath, password);
-                                if (pdfiumDoc != null && pdfiumDoc.PageCount > 0)
+                                if (pdfiumDoc != null && pdfiumDoc.PageCount >= i)
                                 {
-                                    string? page1Ocr = WindowsOcrHelper.RecognizePdfPage(pdfiumDoc, 0, 300);
-                                    if (!string.IsNullOrWhiteSpace(page1Ocr))
+                                    string? pageOcr = WindowsOcrHelper.RecognizePdfPage(pdfiumDoc, i - 1, 300);
+                                    if (!string.IsNullOrWhiteSpace(pageOcr))
                                     {
-                                        var missingLabels = WindowsOcrHelper.DetectMissingStructuralLabels(page1Ocr, letters, words.Select(w => w.Text));
-                                        if (missingLabels.Count >= 2 || (missingLabels.Count >= 1 && missingLabels.Any(l => l.Equals("Valor", StringComparison.OrdinalIgnoreCase))))
+                                        var audit = WindowsOcrHelper.AuditVectorTextDiscrepancy(pageOcr, letters, words.Select(w => w.Text));
+                                        if (audit.HasDiscrepancy)
                                         {
                                             report.HasVectorCurvedLabels = true;
-                                            report.VectorCurvedLabelSamples = missingLabels;
+                                            report.VectorCurvedLabelSamples = audit.MissingStructuralLabels;
+                                            report.VectorCurvedValueSamples = audit.MissingMonetaryValues;
+                                            report.VectorCurvedWordSamples = audit.MissingWords;
+                                            if (audit.HasMissingMonetaryValues || audit.HasSignificantTextLoss)
+                                            {
+                                                report.HasVectorCurvedValuesOrLoss = true;
+                                            }
                                         }
                                     }
                                 }
@@ -988,15 +997,38 @@ namespace FtPdfLite.Services
                         score = 35.0;
                         report.IntegrityScore = score;
                         report.IntegrityStatus = $"{score:0.0}% - Perda de Informações Importantes";
-                        report.DocumentType = "Texto Híbrido (Cabeçalhos em Curvas / Dados Faltantes)";
-                        report.FormattingQuality = "Perda de Dados Estruturais / Inviável";
-                        report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL (PERDA DE DADOS)";
-                        report.ImportVerdictColor = "#EF4444"; // Red
 
-                        string labelSamples = string.Join(", ", report.VectorCurvedLabelSamples.Take(6).Select(l => $"\"{l}\""));
-                        report.DiagnosticWarnings.Insert(0, $"⛔ Perda de Informações Importantes: O documento teve perda de informações essenciais (rótulos e cabeçalhos como {labelSamples} foram desenhados como curvas geométricas Bézier e não existem como texto digital).");
-                        report.DiagnosticWarnings.Add("⚠️ Inviabilidade Técnica: O texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente para processamento ou importação automatizada.");
-                        report.DiagnosticWarnings.Add("Orientação: Informe o cliente sobre a possibilidade e envie para a retaguarda.");
+                        if (report.VectorCurvedValueSamples.Count > 0)
+                        {
+                            report.DocumentType = "Documento com Lançamentos/Valores em Curvas Vetoriais";
+                            report.FormattingQuality = "Valores e Lançamentos Ausentes no Texto";
+                            report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL (VALORES EM CURVAS/DESENHO)";
+                            report.ImportVerdictColor = "#EF4444"; // Red
+
+                            string valSamples = string.Join(", ", report.VectorCurvedValueSamples.Take(6).Select(v => $"\"{v}\""));
+                            report.DiagnosticWarnings.Insert(0, $"⛔ Valores Contábeis em Curvas Vetoriais: O OCR identificou {report.VectorCurvedValueSamples.Count} valores monetários na visualização da página (Exemplos: {valSamples}) que NÃO constam na camada de texto extraída. Eles foram impressos como vetores/curvas de desenho em vez de texto digital e não serão importados.");
+
+                            if (report.VectorCurvedWordSamples.Count > 0)
+                            {
+                                string wordSamples = string.Join(", ", report.VectorCurvedWordSamples.Take(5).Select(w => $"\"{w}\""));
+                                report.DiagnosticWarnings.Add($"⚠️ Divergência de Conteúdo: A página possui perda severa de dados legíveis ({report.VectorCurvedWordSamples.Count} palavras e lançamentos foram convertidos em desenho geométrico, ex: {wordSamples}).");
+                            }
+
+                            report.DiagnosticWarnings.Add("⚠️ Inviabilidade Técnica: O texto teve perda total ou parcial de lançamentos e valores contábeis e é inviável para processamento ou importação automatizada.");
+                            report.DiagnosticWarnings.Add("Orientação: Informe o cliente sobre a perda dos lançamentos no PDF e envie para a retaguarda, ou solicite o documento em formato de dados (OFX, Excel/XLSX, CSV).");
+                        }
+                        else
+                        {
+                            report.DocumentType = "Texto Híbrido (Cabeçalhos em Curvas / Dados Faltantes)";
+                            report.FormattingQuality = "Perda de Dados Estruturais / Inviável";
+                            report.ImportVerdict = "DOCUMENTO NÃO IMPORTÁVEL (PERDA DE DADOS)";
+                            report.ImportVerdictColor = "#EF4444"; // Red
+
+                            string labelSamples = string.Join(", ", report.VectorCurvedLabelSamples.Take(6).Select(l => $"\"{l}\""));
+                            report.DiagnosticWarnings.Insert(0, $"⛔ Perda de Informações Importantes: O documento teve perda de informações essenciais (rótulos e cabeçalhos como {labelSamples} foram desenhados como curvas geométricas Bézier e não existem como texto digital).");
+                            report.DiagnosticWarnings.Add("⚠️ Inviabilidade Técnica: O texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente para processamento ou importação automatizada.");
+                            report.DiagnosticWarnings.Add("Orientação: Informe o cliente sobre a possibilidade e envie para a retaguarda.");
+                        }
                     }
                     else if (score >= 100.0)
                     {

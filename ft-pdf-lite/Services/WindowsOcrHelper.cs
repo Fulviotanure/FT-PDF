@@ -87,23 +87,29 @@ namespace FtPdfLite.Services
             }
         }
 
-        public static List<string> DetectMissingStructuralLabels(string? ocrText, IEnumerable<Letter>? letters, IEnumerable<string>? nativeWordTexts)
+        public static VectorCurvedDiscrepancyAudit AuditVectorTextDiscrepancy(string? ocrText, IEnumerable<Letter>? letters, IEnumerable<string>? nativeWordTexts)
         {
-            var missing = new List<string>();
-            if (string.IsNullOrWhiteSpace(ocrText)) return missing;
+            var res = new VectorCurvedDiscrepancyAudit
+            {
+                OcrTextLength = ocrText?.Length ?? 0
+            };
+
+            if (string.IsNullOrWhiteSpace(ocrText)) return res;
 
             var nativeWordSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (nativeWordTexts != null)
             {
                 foreach (var text in nativeWordTexts)
                 {
-                    string clean = Regex.Replace(text, @"[^\p{L}]", "").Trim();
+                    string clean = Regex.Replace(text, @"[^\p{L}0-9,.]", "").Trim();
                     if (!string.IsNullOrEmpty(clean)) nativeWordSet.Add(clean);
                 }
             }
 
             string fullNativeText = letters != null ? string.Concat(letters.Select(l => l.Value)) : string.Empty;
+            res.NativeTextLength = fullNativeText.Length;
 
+            // 1. Rótulos e cabeçalhos estruturais (ex: Valor, Vencimento, Sacado, Cedente)
             var matches = Regex.Matches(ocrText, @"[\p{L}]+");
             foreach (Match m in matches)
             {
@@ -116,15 +122,62 @@ namespace FtPdfLite.Services
                         fullNativeText.IndexOf(word, StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         string displayLabel = char.ToUpperInvariant(word[0]) + (word.Length > 1 ? word.Substring(1).ToLowerInvariant() : "");
-                        if (!missing.Any(x => x.Equals(displayLabel, StringComparison.OrdinalIgnoreCase)))
+                        if (!res.MissingStructuralLabels.Any(x => x.Equals(displayLabel, StringComparison.OrdinalIgnoreCase)))
                         {
-                            missing.Add(displayLabel);
+                            res.MissingStructuralLabels.Add(displayLabel);
                         }
                     }
                 }
             }
 
-            return missing;
+            // 2. Valores monetários / contábeis (ex: 838,00, 1.899,72)
+            var currencyMatches = Regex.Matches(ocrText, @"\b\d{1,3}(?:\.\d{3})*,\d{2}\b|\b\d+,\d{2}\b");
+            var distinctValues = new HashSet<string>();
+            foreach (Match m in currencyMatches)
+            {
+                string val = m.Value;
+                if (val != "0,00" && val != "00,00")
+                {
+                    distinctValues.Add(val);
+                }
+            }
+            res.TotalOcrMonetaryValuesCount = distinctValues.Count;
+
+            foreach (var val in distinctValues)
+            {
+                if (!fullNativeText.Contains(val) && !nativeWordSet.Contains(val))
+                {
+                    res.MissingMonetaryValues.Add(val);
+                }
+            }
+
+            // 3. Discrepância severa de volume / palavras convertidas em curvas
+            var ocrWords = Regex.Matches(ocrText, @"[\p{L}]{4,}")
+                .Select(m => m.Value)
+                .Where(w => w.Length >= 4)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var w in ocrWords)
+            {
+                if (fullNativeText.IndexOf(w, StringComparison.OrdinalIgnoreCase) < 0 && !nativeWordSet.Contains(w))
+                {
+                    res.MissingWords.Add(w);
+                }
+            }
+
+            if (res.OcrTextLength >= 250 && res.NativeTextLength < res.OcrTextLength * 0.60 && res.MissingWords.Count >= 10)
+            {
+                res.HasSignificantTextLoss = true;
+            }
+
+            return res;
+        }
+
+        public static List<string> DetectMissingStructuralLabels(string? ocrText, IEnumerable<Letter>? letters, IEnumerable<string>? nativeWordTexts)
+        {
+            var audit = AuditVectorTextDiscrepancy(ocrText, letters, nativeWordTexts);
+            return audit.MissingStructuralLabels;
         }
 
         private static async Task<string?> RecognizeTextInternalAsync(byte[] imageBytes)
@@ -310,5 +363,21 @@ namespace FtPdfLite.Services
         public string CategoryDisplayName { get; set; } = "Nenhum";
         public string RawText { get; set; } = string.Empty;
         public string CleanText { get; set; } = string.Empty;
+    }
+
+    public class VectorCurvedDiscrepancyAudit
+    {
+        public bool HasDiscrepancy => HasMissingStructuralLabels || HasMissingMonetaryValues || HasSignificantTextLoss;
+        public bool HasMissingStructuralLabels => MissingStructuralLabels.Count >= 2 || (MissingStructuralLabels.Count >= 1 && MissingStructuralLabels.Any(l => l.Equals("Valor", StringComparison.OrdinalIgnoreCase)));
+        public bool HasMissingMonetaryValues => MissingMonetaryValues.Count >= 2 || (MissingMonetaryValues.Count >= 1 && TotalOcrMonetaryValuesCount >= 2 && MissingMonetaryValues.Count == TotalOcrMonetaryValuesCount);
+        public bool HasSignificantTextLoss { get; set; }
+
+        public List<string> MissingStructuralLabels { get; set; } = new();
+        public List<string> MissingMonetaryValues { get; set; } = new();
+        public List<string> MissingWords { get; set; } = new();
+        public int OcrTextLength { get; set; }
+        public int NativeTextLength { get; set; }
+        public int TotalOcrMonetaryValuesCount { get; set; }
+        public int TotalMissingMonetaryValuesCount => MissingMonetaryValues.Count;
     }
 }
