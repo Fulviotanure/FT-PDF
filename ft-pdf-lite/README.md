@@ -24,7 +24,16 @@ Versão ultraleve, rápida e minimalista do **FT PDF** focada exclusivamente em 
 
 ---
 
-## 📦 Versão 2.5.2
+## 📦 Versão 2.5.4
+- **🔍 Campo de Pesquisa Integrado no Visualizador**: Localização instantânea de termos e valores diretamente na barra superior de leitura (`Ctrl+F`).
+- **🔢 Contador Dinâmico de Ocorrências**: Exibição em tempo real do resultado ativo e total de ocorrências encontradas no documento (ex: `1 de 14` ou `0 de 0`).
+- **⬆️⬇️ Navegação por Ocorrências (Anterior / Posterior)**: Botões dedicados `▲` (anterior) e `▼` (próximo) para percorrer todas as correspondências com rolagem automática e destaque visual.
+- **⌨️ Atalhos de Teclado**: Suporte a `Enter` (próximo), `Shift+Enter` (anterior), setas `▲`/`▼`, `F3`/`Shift+F3`, e `Esc` para limpar pesquisa.
+
+---
+
+## 📦 Versão 2.5.3
+- **Auditoria OCR de Valores e Lançamentos em Curvas Vetoriais**: Identificação e extração de valores monetários desenhados em curvas no PDF.
 - **Diagnóstico de Rótulos em Curvas Vetoriais**: Identificação avançada de cabeçalhos e rótulos bancários (ex: comprovantes Santander) desenhados puramente como vetores/curvas Bézier, os quais não possuem texto digital extraível.
 - **Veredito Claro de Inviabilidade Técnica**: Quando detectada perda de dados estruturais críticos, o documento é classificado com score de 35% e recebe o alerta: *"Atenção: o texto teve perda de informações importantes e tem altas chances de ser inviável tecnicamente. Informe o cliente sobre a possibilidade e envie para a retaguarda."*
 - **Auditoria de Integridade Estrutural em Tempo Recorde**: Renderização e reconhecimento por OCR nativo da página inicial em menos de 0,7s, sem botão de cópia de OCR e sem poluir o fluxo do usuário.

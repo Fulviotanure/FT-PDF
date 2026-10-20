@@ -99,6 +99,9 @@ namespace FtPdfLite
         private CancellationTokenSource? _thumbnailCts;
         private PdfRenderer? _pdfRenderer;
         private PdfRenderer? _splitPdfRenderer;
+        private PdfSearchManager? _searchManager;
+        private DispatcherTimer? _searchDebounceTimer;
+        private string _lastSearchedText = string.Empty;
         private bool _commandLineArgsChecked = false;
 
         [System.Runtime.InteropServices.DllImport("dwmapi.dll", PreserveSig = true)]
@@ -156,6 +159,15 @@ namespace FtPdfLite
             SizeChanged += (s, e) => UpdateTabsBar();
             PreviewKeyDown += MainWindow_PreviewKeyDown;
             InitializePdfRenderer();
+            _searchDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(200)
+            };
+            _searchDebounceTimer.Tick += (s, e) =>
+            {
+                _searchDebounceTimer.Stop();
+                ExecuteSearch(TxtViewerSearch.Text);
+            };
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: true, this);
             Loaded += (s, e) => 
             {
@@ -253,7 +265,13 @@ namespace FtPdfLite
         {
             if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control))
             {
-                if (e.Key == System.Windows.Input.Key.O || e.Key == System.Windows.Input.Key.T)
+                if (e.Key == System.Windows.Input.Key.F)
+                {
+                    e.Handled = true;
+                    TxtViewerSearch.Focus();
+                    TxtViewerSearch.SelectAll();
+                }
+                else if (e.Key == System.Windows.Input.Key.O || e.Key == System.Windows.Input.Key.T)
                 {
                     e.Handled = true;
                     BtnOpenFile_Click(this, new RoutedEventArgs());
@@ -281,6 +299,14 @@ namespace FtPdfLite
                         SetActiveTab(_tabs[idx]);
                     }
                 }
+            }
+            else if (e.Key == System.Windows.Input.Key.F3)
+            {
+                e.Handled = true;
+                if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
+                    SearchPrevMatch();
+                else
+                    SearchNextMatch();
             }
         }
 
@@ -607,6 +633,34 @@ namespace FtPdfLite
 
             AttachRightClickPan(_pdfRenderer, contextMenu);
 
+            _searchManager = new PdfSearchManager(_pdfRenderer);
+
+            _pdfRenderer.KeyDown += (s, e) =>
+            {
+                if (e.Control && e.KeyCode == System.Windows.Forms.Keys.F)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        TxtViewerSearch.Focus();
+                        TxtViewerSearch.SelectAll();
+                    });
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+                else if (e.KeyCode == System.Windows.Forms.Keys.F3)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (e.Shift)
+                            SearchPrevMatch();
+                        else
+                            SearchNextMatch();
+                    });
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                }
+            };
+
             PdfHost.Child = _pdfRenderer;
         }
 
@@ -679,6 +733,18 @@ namespace FtPdfLite
                         _activePageNum = _pdfRenderer.Page + 1;
                         TxtViewerPageInfo.Text = $"Página {_activePageNum} de {tab.TotalPages}";
                         UpdateZoomLabel(_pdfRenderer.Zoom);
+
+                        if (!string.IsNullOrWhiteSpace(TxtViewerSearch.Text))
+                        {
+                            ExecuteSearch(TxtViewerSearch.Text);
+                        }
+                        else
+                        {
+                            _searchManager?.Reset();
+                            BadgeSearchCount.Visibility = Visibility.Collapsed;
+                            BtnSearchPrev.IsEnabled = false;
+                            BtnSearchNext.IsEnabled = false;
+                        }
                     }
                 }
             }
@@ -710,6 +776,190 @@ namespace FtPdfLite
             _pdfRenderer.ZoomMode = PdfViewerZoomMode.FitWidth;
             UpdateZoomLabel(_pdfRenderer.Zoom);
         }
+
+        #region Search Functionality
+
+        private void TxtViewerSearch_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            string text = TxtViewerSearch.Text;
+            TxtSearchPlaceholder.Visibility = string.IsNullOrEmpty(text) ? Visibility.Visible : Visibility.Collapsed;
+            BtnClearSearch.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+
+            _searchDebounceTimer?.Stop();
+            if (string.IsNullOrEmpty(text))
+            {
+                _lastSearchedText = string.Empty;
+                _searchManager?.Reset();
+                BadgeSearchCount.Visibility = Visibility.Collapsed;
+                BtnSearchPrev.IsEnabled = false;
+                BtnSearchNext.IsEnabled = false;
+            }
+            else
+            {
+                _searchDebounceTimer?.Start();
+            }
+        }
+
+        private void TxtViewerSearch_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                e.Handled = true;
+                _searchDebounceTimer?.Stop();
+                string q = TxtViewerSearch.Text.Trim();
+                if (q != _lastSearchedText)
+                {
+                    ExecuteSearch(q);
+                }
+                else
+                {
+                    if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
+                        SearchPrevMatch();
+                    else
+                        SearchNextMatch();
+                }
+            }
+            else if (e.Key == System.Windows.Input.Key.Up)
+            {
+                e.Handled = true;
+                SearchPrevMatch();
+            }
+            else if (e.Key == System.Windows.Input.Key.Down)
+            {
+                e.Handled = true;
+                SearchNextMatch();
+            }
+            else if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                e.Handled = true;
+                BtnClearSearch_Click(this, new RoutedEventArgs());
+                PdfHost.Focus();
+            }
+        }
+
+        private void ExecuteSearch(string rawQuery)
+        {
+            string query = rawQuery?.Trim() ?? string.Empty;
+            _lastSearchedText = query;
+
+            if (string.IsNullOrEmpty(query))
+            {
+                _searchManager?.Reset();
+                BadgeSearchCount.Visibility = Visibility.Collapsed;
+                BtnSearchPrev.IsEnabled = false;
+                BtnSearchNext.IsEnabled = false;
+                return;
+            }
+
+            if (_searchManager == null && _pdfRenderer != null)
+            {
+                _searchManager = new PdfSearchManager(_pdfRenderer);
+            }
+
+            if (_searchManager == null || _activeTab?.PdfDoc == null)
+            {
+                TxtSearchCount.Text = "0 de 0";
+                TxtSearchCount.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+                BadgeSearchCount.Visibility = Visibility.Visible;
+                BtnSearchPrev.IsEnabled = false;
+                BtnSearchNext.IsEnabled = false;
+                return;
+            }
+
+            try
+            {
+                bool found = _searchManager.Search(query);
+                int count = _searchManager.MatchCount;
+
+                if (!found || count == 0)
+                {
+                    TxtSearchCount.Text = "0 de 0";
+                    TxtSearchCount.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+                    BadgeSearchCount.Visibility = Visibility.Visible;
+                    BtnSearchPrev.IsEnabled = false;
+                    BtnSearchNext.IsEnabled = false;
+                }
+                else
+                {
+                    _searchManager.FindNext(forward: true);
+                    UpdateSearchCounter();
+                }
+            }
+            catch
+            {
+                TxtSearchCount.Text = "0 de 0";
+                TxtSearchCount.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+                BadgeSearchCount.Visibility = Visibility.Visible;
+                BtnSearchPrev.IsEnabled = false;
+                BtnSearchNext.IsEnabled = false;
+            }
+        }
+
+        private void BtnSearchNext_Click(object sender, RoutedEventArgs e)
+        {
+            SearchNextMatch();
+        }
+
+        private void BtnSearchPrev_Click(object sender, RoutedEventArgs e)
+        {
+            SearchPrevMatch();
+        }
+
+        private void SearchNextMatch()
+        {
+            if (_searchManager == null || _searchManager.MatchCount == 0) return;
+            try
+            {
+                _searchManager.FindNext(forward: true);
+                UpdateSearchCounter();
+            }
+            catch { }
+        }
+
+        private void SearchPrevMatch()
+        {
+            if (_searchManager == null || _searchManager.MatchCount == 0) return;
+            try
+            {
+                _searchManager.FindNext(forward: false);
+                UpdateSearchCounter();
+            }
+            catch { }
+        }
+
+        private void UpdateSearchCounter()
+        {
+            if (_searchManager == null || _searchManager.MatchCount == 0)
+            {
+                TxtSearchCount.Text = "0 de 0";
+                TxtSearchCount.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F87171"));
+                BadgeSearchCount.Visibility = Visibility.Visible;
+                BtnSearchPrev.IsEnabled = false;
+                BtnSearchNext.IsEnabled = false;
+                return;
+            }
+
+            int currentIdx = _searchManager.Offset >= 0 ? _searchManager.Offset + 1 : 1;
+            int total = _searchManager.MatchCount;
+            TxtSearchCount.Text = $"{currentIdx} de {total}";
+            TxtSearchCount.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38BDF8"));
+            BadgeSearchCount.Visibility = Visibility.Visible;
+            BtnSearchPrev.IsEnabled = true;
+            BtnSearchNext.IsEnabled = true;
+        }
+
+        private void BtnClearSearch_Click(object sender, RoutedEventArgs e)
+        {
+            TxtViewerSearch.Text = string.Empty;
+            _lastSearchedText = string.Empty;
+            _searchManager?.Reset();
+            BadgeSearchCount.Visibility = Visibility.Collapsed;
+            BtnSearchPrev.IsEnabled = false;
+            BtnSearchNext.IsEnabled = false;
+            TxtViewerSearch.Focus();
+        }
+
+        #endregion
 
         #endregion
 
@@ -986,6 +1236,14 @@ namespace FtPdfLite
             PanelEmptyState.Visibility = Visibility.Visible;
             PanelActiveContent.Visibility = Visibility.Collapsed;
             PdfHost.Child = null;
+            _searchManager?.Reset();
+            _searchManager = null;
+            TxtViewerSearch.Text = string.Empty;
+            _lastSearchedText = string.Empty;
+            BadgeSearchCount.Visibility = Visibility.Collapsed;
+            BtnSearchPrev.IsEnabled = false;
+            BtnSearchNext.IsEnabled = false;
+            BtnClearSearch.Visibility = Visibility.Collapsed;
             _pdfRenderer?.Dispose();
             _pdfRenderer = null;
             SplitPdfHost.Child = null;

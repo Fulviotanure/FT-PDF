@@ -372,19 +372,81 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
 
-                                <!-- Page indicator -->
-                                <TextBlock x:Name="TxtViewerPageInfo" Grid.Column="0" Text="Página 1 de 1" 
-                                           FontSize="12" FontWeight="Medium" Foreground="#94A3B8" 
-                                           VerticalAlignment="Center"/>
+                                <!-- Page indicator & Loading indicator -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtViewerPageInfo" Text="Página 1 de 1" 
+                                               FontSize="12" FontWeight="Medium" Foreground="#94A3B8" 
+                                               VerticalAlignment="Center"/>
 
-                                <!-- Center: Analysis Feedback Indicator Badge -->
-                                <Border x:Name="BadgeAnalysisLoading" Grid.Column="1" HorizontalAlignment="Center"
-                                        Background="#1E293B" BorderBrush="#3B82F6" BorderThickness="1"
-                                        CornerRadius="12" Padding="10,2" Visibility="Collapsed" VerticalAlignment="Center">
+                                    <!-- Analysis Feedback Indicator Badge -->
+                                    <Border x:Name="BadgeAnalysisLoading" Margin="14,0,0,0"
+                                            Background="#1E293B" BorderBrush="#3B82F6" BorderThickness="1"
+                                            CornerRadius="12" Padding="8,1.5" Visibility="Collapsed" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="⏳" FontSize="10" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="TxtAnalysisLoading" Text="Analisando integridade..." 
+                                                       FontSize="10.5" FontWeight="SemiBold" Foreground="#60A5FA" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Center: Search Box Container with Counter and Up/Down navigation -->
+                                <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Background="#13182B" BorderBrush="#334155" BorderThickness="1"
+                                        CornerRadius="6" Height="26" Padding="6,0,2,0">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="⏳" FontSize="11" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="TxtAnalysisLoading" Text="Analisando integridade do documento..." 
-                                                   FontSize="11" FontWeight="SemiBold" Foreground="#60A5FA" VerticalAlignment="Center" />
+                                        <!-- Search Icon -->
+                                        <TextBlock Text="🔍" FontSize="11" Foreground="#64748B" VerticalAlignment="Center" Margin="0,0,5,0" />
+
+                                        <!-- Search Input with Placeholder -->
+                                        <Grid VerticalAlignment="Center">
+                                            <TextBox x:Name="TxtViewerSearch" Width="140" Height="22"
+                                                     Background="Transparent" BorderThickness="0"
+                                                     Foreground="#F8FAFC" CaretBrush="#38BDF8"
+                                                     FontSize="11.5" VerticalContentAlignment="Center"
+                                                     TextChanged="TxtViewerSearch_TextChanged"
+                                                     PreviewKeyDown="TxtViewerSearch_PreviewKeyDown" />
+                                            <TextBlock x:Name="TxtSearchPlaceholder" Text="Localizar no PDF... (Ctrl+F)"
+                                                       FontSize="11" Foreground="#64748B"
+                                                       VerticalAlignment="Center" Margin="2,0,0,0"
+                                                       IsHitTestVisible="False" />
+                                        </Grid>
+
+                                        <!-- Clear Search Button (✕) -->
+                                        <Button x:Name="BtnClearSearch" Content="✕" Width="18" Height="20"
+                                                Background="Transparent" Foreground="#94A3B8" BorderThickness="0"
+                                                FontSize="10" Cursor="Hand" ToolTip="Limpar pesquisa (Esc)"
+                                                Visibility="Collapsed" Click="BtnClearSearch_Click" Margin="1,0,2,0">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
+
+                                        <!-- Result Counter Badge -->
+                                        <Border x:Name="BadgeSearchCount" Background="#1E293B" CornerRadius="4" Padding="5,1" Margin="2,0,4,0" Visibility="Collapsed" VerticalAlignment="Center">
+                                            <TextBlock x:Name="TxtSearchCount" Text="0 de 0" 
+                                                       FontSize="10.5" FontWeight="SemiBold" Foreground="#38BDF8"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+
+                                        <!-- Separator -->
+                                        <Border Width="1" Height="14" Background="#1E293B" Margin="2,0,3,0" />
+
+                                        <!-- Up Arrow: Anterior -->
+                                        <Button x:Name="BtnSearchPrev" Content="▲" Width="22" Height="22"
+                                                Background="Transparent" Foreground="#94A3B8" BorderThickness="0"
+                                                FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                                ToolTip="Item anterior (Shift+Enter ou Seta Cima)"
+                                                IsEnabled="False" Click="BtnSearchPrev_Click">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
+
+                                        <!-- Down Arrow: Próximo / Posterior -->
+                                        <Button x:Name="BtnSearchNext" Content="▼" Width="22" Height="22"
+                                                Background="Transparent" Foreground="#94A3B8" BorderThickness="0"
+                                                FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                                ToolTip="Próximo item (Enter ou Seta Baixo)"
+                                                IsEnabled="False" Click="BtnSearchNext_Click">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
                                     </StackPanel>
                                 </Border>
 
