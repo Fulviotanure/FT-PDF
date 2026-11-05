@@ -91,11 +91,58 @@ namespace CCPDF.Services
                         }
                     }
                 }
+                // Todas as releases foram verificadas com sucesso na API e nenhuma é mais nova
+                return result;
             }
             catch (Exception ex)
             {
-                result.ErrorMessage = ex.Message;
-                Debug.WriteLine($"Erro ao checar atualizações: {ex.Message}");
+                Debug.WriteLine($"GitHub REST API indisponível ou com rate-limit: {ex.Message}. Tentando fallback direto via releases/latest...");
+            }
+
+            // 2. Fallback imune a Rate Limit da API do GitHub:
+            // Obtém o cabeçalho 302 Location de https://github.com/Fulviotanure/ft-pdf/releases/latest
+            try
+            {
+                using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+                client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("CCPDFUpdater", "2.0"));
+
+                using var headResp = await client.GetAsync("https://github.com/Fulviotanure/ft-pdf/releases/latest");
+                var location = headResp.Headers.Location;
+                if (location != null)
+                {
+                    string locStr = location.ToString();
+                    int tagIdx = locStr.LastIndexOf('/');
+                    if (tagIdx >= 0 && tagIdx < locStr.Length - 1)
+                    {
+                        string latestTag = locStr.Substring(tagIdx + 1);
+                        string versionStr = latestTag.TrimStart('v', 'V');
+                        if (Version.TryParse(versionStr, out var latestVer))
+                        {
+                            if (latestVer > CurrentVersion)
+                            {
+                                result.HasUpdate = true;
+                                result.LatestVersion = versionStr;
+                                result.DownloadUrl = $"https://github.com/Fulviotanure/ft-pdf/releases/download/{latestTag}/CCPDF.exe";
+                                result.ReleaseNotes = $"Nova versão {latestTag} disponível.";
+                                result.ErrorMessage = "";
+                                return result;
+                            }
+                            else
+                            {
+                                // Já está utilizando a versão mais recente
+                                result.LatestVersion = versionStr;
+                                result.ErrorMessage = "";
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception fallbackEx)
+            {
+                result.ErrorMessage = fallbackEx.Message;
+                Debug.WriteLine($"Erro no fallback de atualização: {fallbackEx.Message}");
             }
 
             return result;
