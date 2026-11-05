@@ -116,6 +116,7 @@ namespace CCPDF
         private PdfDocumentTab? _activeTab;
         private readonly PdfExtractionService _extractionService = new();
         private bool _isRawTextMode = false;
+        private bool _isDiagnosticsCollapsed = false;
         private bool _isNotepadOpen = false;
         private bool _isPageSidebarOpen = false;
         private PdfDocumentTab? _splitTab = null;
@@ -127,6 +128,7 @@ namespace CCPDF
         private PdfRenderer? _splitPdfRenderer;
         private PdfSearchManager? _searchManager;
         private DispatcherTimer? _searchDebounceTimer;
+        private DispatcherTimer? _notepadSearchDebounceTimer;
         private string _lastSearchedText = string.Empty;
         private bool _commandLineArgsChecked = false;
         private bool _isDarkMode = true;
@@ -201,6 +203,15 @@ namespace CCPDF
             {
                 _searchDebounceTimer.Stop();
                 ExecuteSearch(TxtViewerSearch.Text);
+            };
+            _notepadSearchDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(180)
+            };
+            _notepadSearchDebounceTimer.Tick += (s, e) =>
+            {
+                _notepadSearchDebounceTimer.Stop();
+                ExecuteNotepadSearch(TxtNotepadSearch.Text, moveNext: false);
             };
             Loaded += async (s, e) => await UpdateService.AutoCheckOnStartupAsync(isLite: true, this);
             Loaded += (s, e) => 
@@ -2204,6 +2215,17 @@ namespace CCPDF
             TxtEditor.Text = "[Extraindo texto vetorial e analisando conteúdo do documento em segundo plano...]";
             TxtEditorStats.Text = "Analisando...";
             TxtEditorMode.Text = "Modo: Verificando";
+
+            // Sync Compact Verdict Badge with Analyzing State
+            if (BadgeCompactVerdict != null)
+            {
+                BadgeCompactVerdict.Background = BorderImportVerdict.Background;
+                BadgeCompactVerdict.BorderBrush = BorderImportVerdict.BorderBrush;
+                TxtCompactVerdictIcon.Text = TxtImportVerdictIcon.Text;
+                TxtCompactVerdict.Text = TxtImportVerdict.Text;
+                TxtCompactVerdict.Foreground = TxtImportVerdict.Foreground;
+            }
+            ApplyDiagnosticsCollapseState();
         }
 
         private void UpdateAnalysisProgress(ExtractionProgressInfo progress)
@@ -2446,6 +2468,17 @@ namespace CCPDF
                 TxtDiagWarning.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(_isDarkMode ? "#5AA87A" : "#0A6844"));
             }
 
+            // Sync Compact Verdict Badge with Import Verdict
+            if (BadgeCompactVerdict != null)
+            {
+                BadgeCompactVerdict.Background = BorderImportVerdict.Background;
+                BadgeCompactVerdict.BorderBrush = BorderImportVerdict.BorderBrush;
+                TxtCompactVerdictIcon.Text = TxtImportVerdictIcon.Text;
+                TxtCompactVerdict.Text = TxtImportVerdict.Text;
+                TxtCompactVerdict.Foreground = TxtImportVerdict.Foreground;
+            }
+            ApplyDiagnosticsCollapseState();
+
             UpdateEditorStats();
         }
 
@@ -2473,6 +2506,36 @@ namespace CCPDF
         }
 
         private void BtnCloseNotepad_Click(object sender, RoutedEventArgs e) => CloseNotepad();
+
+        private void BtnToggleDiagnosticCollapse_Click(object sender, RoutedEventArgs e)
+        {
+            _isDiagnosticsCollapsed = !_isDiagnosticsCollapsed;
+            ApplyDiagnosticsCollapseState();
+        }
+
+        private void ApplyDiagnosticsCollapseState()
+        {
+            if (PanelDiagnosticDetails == null) return;
+
+            if (_isDiagnosticsCollapsed)
+            {
+                PanelDiagnosticDetails.Visibility = Visibility.Collapsed;
+                if (BadgeCompactVerdict != null) BadgeCompactVerdict.Visibility = Visibility.Visible;
+                if (TxtToggleDiagIcon != null) TxtToggleDiagIcon.Text = "▼";
+                if (TxtToggleDiagText != null) TxtToggleDiagText.Text = "Restaurar";
+                if (BtnToggleDiagnosticCollapse != null)
+                    BtnToggleDiagnosticCollapse.ToolTip = "Restaurar dados superiores e tamanho padrão";
+            }
+            else
+            {
+                PanelDiagnosticDetails.Visibility = Visibility.Visible;
+                if (BadgeCompactVerdict != null) BadgeCompactVerdict.Visibility = Visibility.Collapsed;
+                if (TxtToggleDiagIcon != null) TxtToggleDiagIcon.Text = "⛶";
+                if (TxtToggleDiagText != null) TxtToggleDiagText.Text = "Expandir TXT";
+                if (BtnToggleDiagnosticCollapse != null)
+                    BtnToggleDiagnosticCollapse.ToolTip = "Expandir campo de texto (ocultar dados superiores)";
+            }
+        }
 
         private void BtnToggleRawText_Click(object sender, RoutedEventArgs e)
         {
@@ -2516,7 +2579,21 @@ namespace CCPDF
             TxtNotepadSearchPlaceholder.Visibility = hasText ? Visibility.Collapsed : Visibility.Visible;
             BtnClearNotepadSearch.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
 
-            ExecuteNotepadSearch(query, moveNext: false);
+            _notepadSearchDebounceTimer?.Stop();
+
+            if (!hasText)
+            {
+                _notepadMatchIndices.Clear();
+                _notepadCurrentMatchIndex = -1;
+                BadgeNotepadSearchCount.Visibility = Visibility.Collapsed;
+                BtnNotepadSearchPrev.IsEnabled = false;
+                BtnNotepadSearchNext.IsEnabled = false;
+                TxtEditor.Select(0, 0);
+            }
+            else
+            {
+                _notepadSearchDebounceTimer?.Start();
+            }
         }
 
         private void TxtNotepadSearch_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -2524,31 +2601,70 @@ namespace CCPDF
             if (e.Key == System.Windows.Input.Key.Enter)
             {
                 e.Handled = true;
-                if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
-                    NotepadSearchPrev();
+                _notepadSearchDebounceTimer?.Stop();
+                string query = TxtNotepadSearch.Text;
+                if (_notepadMatchIndices.Count == 0 && !string.IsNullOrWhiteSpace(query))
+                {
+                    ExecuteNotepadSearch(query, moveNext: false);
+                }
                 else
-                    NotepadSearchNext();
+                {
+                    if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift))
+                        NotepadSearchPrev();
+                    else
+                        NotepadSearchNext();
+                }
+            }
+            else if (e.Key == System.Windows.Input.Key.Up)
+            {
+                e.Handled = true;
+                NotepadSearchPrev();
+            }
+            else if (e.Key == System.Windows.Input.Key.Down)
+            {
+                e.Handled = true;
+                NotepadSearchNext();
             }
             else if (e.Key == System.Windows.Input.Key.Escape)
             {
                 e.Handled = true;
+                _notepadSearchDebounceTimer?.Stop();
                 BtnClearNotepadSearch_Click(this, new RoutedEventArgs());
             }
         }
 
         private void BtnClearNotepadSearch_Click(object sender, RoutedEventArgs e)
         {
+            _notepadSearchDebounceTimer?.Stop();
             TxtNotepadSearch.Text = string.Empty;
             _notepadMatchIndices.Clear();
             _notepadCurrentMatchIndex = -1;
             BadgeNotepadSearchCount.Visibility = Visibility.Collapsed;
             BtnNotepadSearchPrev.IsEnabled = false;
             BtnNotepadSearchNext.IsEnabled = false;
+            TxtEditor.Select(0, 0);
             TxtEditor.Focus();
         }
 
-        private void BtnNotepadSearchPrev_Click(object sender, RoutedEventArgs e) => NotepadSearchPrev();
-        private void BtnNotepadSearchNext_Click(object sender, RoutedEventArgs e) => NotepadSearchNext();
+        private void BtnNotepadSearchPrev_Click(object sender, RoutedEventArgs e)
+        {
+            _notepadSearchDebounceTimer?.Stop();
+            if (_notepadMatchIndices.Count == 0 && !string.IsNullOrWhiteSpace(TxtNotepadSearch.Text))
+            {
+                ExecuteNotepadSearch(TxtNotepadSearch.Text, moveNext: false);
+            }
+            NotepadSearchPrev();
+        }
+
+        private void BtnNotepadSearchNext_Click(object sender, RoutedEventArgs e)
+        {
+            _notepadSearchDebounceTimer?.Stop();
+            if (_notepadMatchIndices.Count == 0 && !string.IsNullOrWhiteSpace(TxtNotepadSearch.Text))
+            {
+                ExecuteNotepadSearch(TxtNotepadSearch.Text, moveNext: false);
+            }
+            NotepadSearchNext();
+        }
 
         private void ExecuteNotepadSearch(string query, bool moveNext)
         {
@@ -2616,13 +2732,23 @@ namespace CCPDF
             int charIndex = _notepadMatchIndices[_notepadCurrentMatchIndex];
             int length = TxtNotepadSearch.Text.Length;
 
-            TxtEditor.Focus();
+            // Salva o foco e a posição do cursor do campo de pesquisa se ele estiver ativo
+            bool searchHadFocus = TxtNotepadSearch.IsKeyboardFocusWithin;
+            int searchCaret = TxtNotepadSearch.CaretIndex;
+
             TxtEditor.Select(charIndex, length);
 
             int lineIndex = TxtEditor.GetLineIndexFromCharacterIndex(charIndex);
             if (lineIndex >= 0)
             {
                 TxtEditor.ScrollToLine(lineIndex);
+            }
+
+            // Garante que o foco e o traço de digitação permaneçam intactos no campo de pesquisa
+            if (searchHadFocus && !TxtNotepadSearch.IsKeyboardFocusWithin)
+            {
+                TxtNotepadSearch.Focus();
+                TxtNotepadSearch.CaretIndex = searchCaret;
             }
         }
         #endregion
@@ -2717,6 +2843,7 @@ namespace CCPDF
         private void BtnSetDefaultBanner_Click(object sender, RoutedEventArgs e)
         {
             BannerDefaultApp.Visibility = Visibility.Collapsed;
+            DefaultAppService.DismissPrompt(isLite: true);
             DefaultAppService.RegisterAndSetDefault(isLite: true);
         }
 
@@ -3093,6 +3220,13 @@ namespace CCPDF
                 BorderNotepadHeader.BorderBrush = brushBorder;
             }
             if (BtnCloseNotepad != null) BtnCloseNotepad.Foreground = brushTextSecondary;
+            if (BtnToggleDiagnosticCollapse != null)
+            {
+                BtnToggleDiagnosticCollapse.Background = brushBgCard;
+                BtnToggleDiagnosticCollapse.BorderBrush = brushBorder;
+                BtnToggleDiagnosticCollapse.Foreground = brushTextPrimary;
+            }
+            if (TxtToggleDiagIcon != null) TxtToggleDiagIcon.Foreground = brushAccent;
 
             // Diagnostics Card
             if (BorderDiagnostics != null)

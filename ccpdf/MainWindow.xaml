@@ -606,17 +606,15 @@
             <!-- ==================== RIGHT: VALIDATION & NOTEPAD PANEL ==================== -->
             <Border x:Name="PanelNotepad" Grid.Column="4" Background="{DynamicResource SurfaceBrush}" 
                     BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,0,0,0" Visibility="Collapsed">
-                <Grid Margin="12">
+                <Grid Margin="10,10,10,8">
                     <Grid.RowDefinitions>
                         <!-- Top Progress Bar (When Analyzing) -->
                         <RowDefinition Height="Auto" />
-                        <!-- Panel Header (Document Type & Score) -->
+                        <!-- Panel Header (Document Type & Score + Expand TXT Toggle) -->
                         <RowDefinition Height="Auto" />
-                        <!-- Import Verdict Banner -->
+                        <!-- Collapsible Diagnostics & Properties Area -->
                         <RowDefinition Height="Auto" />
-                        <!-- Diagnostics & Properties Area -->
-                        <RowDefinition Height="Auto" />
-                        <!-- Text Editor with Notepad Search -->
+                        <!-- Text Editor with Notepad Search & Actions -->
                         <RowDefinition Height="*" />
                         <!-- Bottom Status Bar -->
                         <RowDefinition Height="Auto" />
@@ -625,53 +623,71 @@
                     <!-- Top Indeterminate Progress Bar (Shows when analyzing) -->
                     <ProgressBar Grid.Row="0" x:Name="ProgressBarAnalysis" Height="3" IsIndeterminate="True" 
                                  Background="Transparent" Foreground="{DynamicResource AccentPrimary}" BorderThickness="0" 
-                                 Margin="0,0,0,8" Visibility="Collapsed" />
+                                 Margin="0,0,0,5" Visibility="Collapsed" />
 
-                    <!-- Header: Integrity Percentage (Top) + Document Classification (Bottom) with Auto-Wrap -->
+                    <!-- Header: Integrity Percentage, Compact Verdict, Doc Type + Expand TXT Toggle & Close -->
                     <Border x:Name="BorderNotepadHeader" Grid.Row="1" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
-                            CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                            CornerRadius="6" Padding="8,5" Margin="0,0,0,6">
                         <Grid>
-                            <Grid.RowDefinitions>
-                                <!-- Top: Percentage Badge & Close Button -->
-                                <RowDefinition Height="Auto" />
-                                <!-- Bottom: Classification Title & Document Type -->
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <!-- Left Info (Score + Compact Verdict + Doc Type) -->
+                                <ColumnDefinition Width="*" />
+                                <!-- Right Controls (Expand TXT Toggle + Close Button) -->
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
 
-                            <!-- Top Row: Integrity Badge (Left) + Close Button (Right) -->
-                            <Grid Grid.Row="0" Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-
-                                <Border Grid.Column="0" x:Name="BadgeIntegrity" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1" 
-                                        CornerRadius="6" Padding="10,5" HorizontalAlignment="Left">
+                            <!-- Left: Badge + Compact Verdict + Doc Type -->
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                <!-- Integrity Badge -->
+                                <Border x:Name="BadgeIntegrity" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1" 
+                                        CornerRadius="5" Padding="6,2" VerticalAlignment="Center">
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock x:Name="TxtIntegrityScore" Text="100% Integridade" 
-                                                   FontSize="12.5" FontWeight="Bold" Foreground="{DynamicResource AccentText}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                                   FontSize="11" FontWeight="Bold" Foreground="{DynamicResource AccentText}" Margin="0,0,4,0" VerticalAlignment="Center" />
                                         <TextBlock x:Name="TxtIntegrityStatusText" Text="Alta Integridade" 
-                                                   FontSize="11" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
+                                                   FontSize="10" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Border>
 
-                                <Button x:Name="BtnCloseNotepad" Grid.Column="1" Content="✕" Click="BtnCloseNotepad_Click"
-                                        Width="26" Height="26" Background="Transparent" Foreground="{DynamicResource TextSecondary}" 
-                                        BorderThickness="0" Cursor="Hand" ToolTip="Recolher Painel" VerticalAlignment="Center" />
-                            </Grid>
+                                <!-- Compact Verdict Badge (Visible when details are squeezed/collapsed) -->
+                                <Border x:Name="BadgeCompactVerdict" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1" 
+                                        CornerRadius="5" Padding="6,2" Margin="5,0,0,0" Visibility="Collapsed" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtCompactVerdictIcon" Text="✅" FontSize="10" Margin="0,0,3,0" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="TxtCompactVerdict" Text="DOCUMENTO IMPORTÁVEL" 
+                                                   FontSize="9.5" FontWeight="Bold" Foreground="{DynamicResource AccentText}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
 
-                            <!-- Bottom Row: Classification Label + Document Type with Full Auto-Wrap -->
-                            <StackPanel Grid.Row="1">
-                                <TextBlock x:Name="TxtHeaderClassifLabel" Text="CLASSIFICAÇÃO DO ARQUIVO" FontSize="9.5" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" />
+                                <!-- Doc Type (Truncated with ellipsis if space is constrained) -->
                                 <TextBlock x:Name="TxtHeaderDocType" Text="Texto Vetorial Nativo" 
-                                           FontSize="14" FontWeight="ExtraBold" Foreground="{DynamicResource AccentPrimary}" 
-                                           TextWrapping="Wrap" Margin="0,3,0,0" LineHeight="18" />
+                                           FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimary}" 
+                                           Margin="7,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="180" />
+                                <TextBlock x:Name="TxtHeaderClassifLabel" Text="CLASSIFICAÇÃO DO ARQUIVO" Visibility="Collapsed" />
+                            </StackPanel>
+
+                            <!-- Right: Expand TXT Button & Close Button -->
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="BtnToggleDiagnosticCollapse" Click="BtnToggleDiagnosticCollapse_Click"
+                                        Background="{DynamicResource SurfaceBrush}" Foreground="{DynamicResource TextPrimary}" 
+                                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" Cursor="Hand"
+                                        Padding="7,3" Margin="0,0,6,0" ToolTip="Expandir campo de texto (ocultar dados superiores)">
+                                    <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style></Button.Resources>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtToggleDiagIcon" Text="⛶" FontSize="10" FontWeight="Bold" Margin="0,0,4,0" VerticalAlignment="Center" Foreground="{DynamicResource AccentPrimary}" />
+                                        <TextBlock x:Name="TxtToggleDiagText" Text="Expandir TXT" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button x:Name="BtnCloseNotepad" Content="✕" Click="BtnCloseNotepad_Click"
+                                        Width="22" Height="22" Background="Transparent" Foreground="{DynamicResource TextSecondary}" 
+                                        BorderThickness="0" Cursor="Hand" ToolTip="Recolher Painel" VerticalAlignment="Center" />
                             </StackPanel>
                         </Grid>
                     </Border>
 
-                    <!-- Import Verdict & Notice Banners -->
-                    <StackPanel Grid.Row="2" Margin="0,0,0,8">
+                    <!-- Collapsible Diagnostics & Details Area (Can be squeezed to maximize editor height) -->
+                    <StackPanel x:Name="PanelDiagnosticDetails" Grid.Row="2" Margin="0,0,0,6">
                         <!-- Upper Balloon: Import Verdict -->
                         <Border x:Name="BorderImportVerdict" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1.5" 
                                 CornerRadius="8" Padding="12,9" Margin="0,0,0,6">
@@ -684,7 +700,7 @@
 
                         <!-- Lower Balloon: Notice (Balão Diferente Embaixo) -->
                         <Border x:Name="BorderRetaguardaNotice" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
-                                CornerRadius="8" Padding="10,7">
+                                CornerRadius="8" Padding="10,7" Margin="0,0,0,6">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
@@ -696,136 +712,139 @@
                                            FontSize="10.5" Foreground="{DynamicResource TextSecondary}" FontStyle="Italic" TextWrapping="Wrap" LineHeight="14" />
                             </Grid>
                         </Border>
+
+                        <!-- Expandable Properties & Diagnostics Section -->
+                        <Border x:Name="BorderDiagnostics" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                CornerRadius="8" Padding="10" Margin="0,0,0,6">
+                            <StackPanel>
+                                <!-- Structured Metrics Grid: Separate Images & Scanned Pages, Dedicated Row for Formatting -->
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Row 0: Sinais Estranhos | Total de Caracteres -->
+                                    <TextBlock Grid.Row="0" Grid.Column="0" x:Name="TxtDiagStrangeChars" Text="Sinais Estranhos: 0" 
+                                               FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtDiagCharCount" Text="Total de Caracteres: 0" 
+                                               FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
+
+                                    <!-- Row 1: Imagens | Páginas Escaneadas (SEPARADOS!) -->
+                                    <TextBlock Grid.Row="1" Grid.Column="0" x:Name="TxtDiagImages" Text="Imagens: 0" 
+                                               FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtDiagScannedPages" Text="Páginas Escaneadas: 0" 
+                                               FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
+
+                                    <!-- Row 2: Formatação (Full width, quebra automática sem sobrepor nada) -->
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" x:Name="TxtDiagFormatting" Text="Formatação: Bem Formatado" 
+                                               FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,0" LineHeight="15" />
+                                </Grid>
+
+                                <ScrollViewer MaxHeight="85" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,8">
+                                    <TextBlock x:Name="TxtDiagWarning" Text="Texto analisado com alta integridade." 
+                                               FontSize="11" Foreground="{DynamicResource AccentText}" TextWrapping="Wrap" />
+                                </ScrollViewer>
+
+                                <Expander x:Name="ExpanderProps" Header="ℹ️ Propriedades do Documento" 
+                                          Foreground="{DynamicResource TextSecondary}" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,0">
+                                    <Border x:Name="BorderPropsContent" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                            CornerRadius="6" Padding="8" Margin="0,4,0,0">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="100" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Tamanho:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtPropFileSize" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Versão PDF:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtPropPdfVersion" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Dimensões:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TxtPropDimensions" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Orientação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TxtPropOrientation" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="4" Grid.Column="0" Text="Autor / Produtor:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtPropAuthorProducer" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Criação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtPropCreationDate" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Segurança:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                            <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtPropSecurity" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+                                        </Grid>
+                                    </Border>
+                                </Expander>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
 
-                    <!-- Expandable Properties & Diagnostics Section -->
-                    <Border x:Name="BorderDiagnostics" Grid.Row="3" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
-                            CornerRadius="8" Padding="10" Margin="0,0,0,8">
-                        <StackPanel>
-                            <!-- Structured Metrics Grid: Separate Images & Scanned Pages, Dedicated Row for Formatting -->
-                            <Grid Margin="0,0,0,8">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-
-                                <!-- Row 0: Sinais Estranhos | Total de Caracteres -->
-                                <TextBlock Grid.Row="0" Grid.Column="0" x:Name="TxtDiagStrangeChars" Text="Sinais Estranhos: 0" 
-                                           FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
-                                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtDiagCharCount" Text="Total de Caracteres: 0" 
-                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
-
-                                <!-- Row 1: Imagens | Páginas Escaneadas (SEPARADOS!) -->
-                                <TextBlock Grid.Row="1" Grid.Column="0" x:Name="TxtDiagImages" Text="Imagens: 0" 
-                                           FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
-                                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtDiagScannedPages" Text="Páginas Escaneadas: 0" 
-                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
-
-                                <!-- Row 2: Formatação (Full width, quebra automática sem sobrepor nada) -->
-                                <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" x:Name="TxtDiagFormatting" Text="Formatação: Bem Formatado" 
-                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,0" LineHeight="15" />
-                            </Grid>
-
-                            <ScrollViewer MaxHeight="105" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,8">
-                                <TextBlock x:Name="TxtDiagWarning" Text="Texto analisado com alta integridade." 
-                                           FontSize="11" Foreground="{DynamicResource AccentText}" TextWrapping="Wrap" />
-                            </ScrollViewer>
-
-                            <Expander x:Name="ExpanderProps" Header="ℹ️ Propriedades do Documento" 
-                                      Foreground="{DynamicResource TextSecondary}" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,8">
-                                <Border x:Name="BorderPropsContent" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
-                                        CornerRadius="6" Padding="8" Margin="0,4,0,0">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="100" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-
-                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Tamanho:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtPropFileSize" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Versão PDF:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtPropPdfVersion" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Dimensões:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TxtPropDimensions" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Orientação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TxtPropOrientation" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Autor / Produtor:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtPropAuthorProducer" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Criação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtPropCreationDate" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-
-                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Segurança:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
-                                        <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtPropSecurity" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
-                                    </Grid>
-                                </Border>
-                            </Expander>
-
-                            <WrapPanel Orientation="Horizontal">
-                                <Button x:Name="BtnToggleRawText" Content="Exibir Texto Cru" Click="BtnToggleRawText_Click"
-                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
-                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
-                                    <Button.Resources>
-                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
-                                    </Button.Resources>
-                                </Button>
-
-                                <Button x:Name="BtnCopyAllText" Content="📋 Copiar Tudo" Click="BtnCopyText_Click"
-                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
-                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
-                                    <Button.Resources>
-                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
-                                    </Button.Resources>
-                                </Button>
-
-                                <Button x:Name="BtnSaveTxt" Content="💾 Salvar .txt" Click="BtnSaveTxt_Click"
-                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
-                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
-                                    <Button.Resources>
-                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
-                                    </Button.Resources>
-                                </Button>
-
-                                <Button x:Name="BtnToggleWrap" Content="Quebrar Linha: ON" Click="BtnToggleWrap_Click"
-                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextSecondary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11"
-                                        Padding="8,5" Margin="0,0,0,4" Cursor="Hand">
-                                    <Button.Resources>
-                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
-                                    </Button.Resources>
-                                </Button>
-                            </WrapPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Text Editor with Dedicated Search Bar -->
-                    <Grid Grid.Row="4">
+                    <!-- Text Editor Area with Action Toolbar and Dedicated Search Bar -->
+                    <Grid Grid.Row="3">
                         <Grid.RowDefinitions>
+                            <!-- Notepad Action Toolbar (Always visible even when details are squeezed) -->
+                            <RowDefinition Height="Auto" />
                             <!-- Search Bar for Notepad -->
                             <RowDefinition Height="Auto" />
                             <!-- Text Editor Area -->
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
+                        <!-- Action Buttons Toolbar -->
+                        <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button x:Name="BtnToggleRawText" Content="Exibir Texto Cru" Click="BtnToggleRawText_Click"
+                                    Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                    Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                </Button.Resources>
+                            </Button>
+
+                            <Button x:Name="BtnCopyAllText" Content="📋 Copiar Tudo" Click="BtnCopyText_Click"
+                                    Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                    Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                </Button.Resources>
+                            </Button>
+
+                            <Button x:Name="BtnSaveTxt" Content="💾 Salvar .txt" Click="BtnSaveTxt_Click"
+                                    Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                    Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                </Button.Resources>
+                            </Button>
+
+                            <Button x:Name="BtnToggleWrap" Content="Quebrar Linha: ON" Click="BtnToggleWrap_Click"
+                                    Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextSecondary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11"
+                                    Padding="8,5" Margin="0,0,0,4" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                </Button.Resources>
+                            </Button>
+                        </WrapPanel>
+
                         <!-- Search Bar in Bloco de Notas -->
-                        <Border x:Name="BorderNotepadSearch" Grid.Row="0" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                        <Border x:Name="BorderNotepadSearch" Grid.Row="1" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="6" Height="30" Padding="8,0,4,0" Margin="0,0,0,6">
                             <Grid VerticalAlignment="Center">
                                 <Grid.ColumnDefinitions>
@@ -864,6 +883,7 @@
                                 <Button Grid.Column="2" x:Name="BtnClearNotepadSearch" Content="✕" Width="20" Height="20"
                                         Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
                                         FontSize="10" Cursor="Hand" ToolTip="Limpar pesquisa (Esc)"
+                                        Focusable="False"
                                         Visibility="Collapsed" Click="BtnClearNotepadSearch_Click" Margin="2,0">
                                     <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
                                 </Button>
@@ -879,6 +899,7 @@
                                 <Button Grid.Column="4" x:Name="BtnNotepadSearchPrev" Content="▲" Width="22" Height="22"
                                         Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
                                         FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                        Focusable="False"
                                         ToolTip="Ocorrência anterior (Shift+Enter)"
                                         IsEnabled="False" Click="BtnNotepadSearchPrev_Click" Margin="1,0">
                                     <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
@@ -888,6 +909,7 @@
                                 <Button Grid.Column="5" x:Name="BtnNotepadSearchNext" Content="▼" Width="22" Height="22"
                                         Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
                                         FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                        Focusable="False"
                                         ToolTip="Próxima ocorrência (Enter)"
                                         IsEnabled="False" Click="BtnNotepadSearchNext_Click" Margin="1,0">
                                     <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
@@ -896,17 +918,19 @@
                         </Border>
 
                         <!-- Text Editor -->
-                        <Border x:Name="BorderTxtEditor" Grid.Row="1" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+                        <Border x:Name="BorderTxtEditor" Grid.Row="2" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
                             <TextBox x:Name="TxtEditor" AcceptsReturn="True" AcceptsTab="True"
                                      TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                                      Background="Transparent" Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource AccentPrimary}"
+                                     SelectionBrush="{DynamicResource AccentPrimary}" SelectionOpacity="0.4"
+                                     IsInactiveSelectionHighlightEnabled="True"
                                      FontFamily="Consolas, Cascadia Code, Courier New" FontSize="12.5"
                                      Padding="10" BorderThickness="0" TextChanged="TxtEditor_TextChanged" />
                         </Border>
                     </Grid>
 
                     <!-- Bottom Status Bar -->
-                    <Grid Grid.Row="5" Margin="0,6,0,0">
+                    <Grid Grid.Row="4" Margin="0,6,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />

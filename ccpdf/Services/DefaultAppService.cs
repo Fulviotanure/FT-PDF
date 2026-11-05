@@ -22,38 +22,79 @@ namespace CCPDF.Services
         {
             try
             {
-                string targetProgId = isLite ? "CCPDF.Document" : "CCPDF.Document";
-                string targetExeName = isLite ? "CCPDF.exe" : "CCPDF.exe";
-
-                // 1. Checa chave UserChoice do Explorer
-                using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf\UserChoice");
-                if (key != null)
+                // Helper para verificar se a string identifica nosso aplicativo (CCPDF ou legado FT-PDF)
+                static bool IsOurApp(string? val)
                 {
-                    string progId = key.GetValue("ProgId") as string ?? "";
-                    if (progId.Equals(targetProgId, StringComparison.OrdinalIgnoreCase) ||
-                        progId.Contains(isLite ? "CCPDF" : "CCPDF", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(val)) return false;
+                    return val.Contains("CCPDF", StringComparison.OrdinalIgnoreCase) ||
+                           val.Contains("FtPdf", StringComparison.OrdinalIgnoreCase);
+                }
+
+                // 1. Checa chave UserChoice do Explorer (Windows 10/11 per-user explicit choice)
+                using (var userChoiceKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.pdf\UserChoice"))
+                {
+                    if (userChoiceKey != null)
                     {
-                        return true;
+                        string progId = userChoiceKey.GetValue("ProgId") as string ?? "";
+                        if (IsOurApp(progId)) return true;
                     }
                 }
 
-                // 2. Checa via AssocQueryString
-                uint length = 0;
-                AssocQueryString(0, 2 /* ASSOCSTR_EXECUTABLE */, ".pdf", null, null, ref length);
-                if (length > 0)
+                // 2. Checa via AssocQueryString - ASSOCSTR_PROGID (20)
+                string assocProgId = QueryAssoc(20 /* ASSOCSTR_PROGID */, ".pdf");
+                if (IsOurApp(assocProgId)) return true;
+
+                // 3. Checa via AssocQueryString - ASSOCSTR_EXECUTABLE (2)
+                string assocExe = QueryAssoc(2 /* ASSOCSTR_EXECUTABLE */, ".pdf");
+                if (IsOurApp(assocExe)) return true;
+
+                // 4. Checa via AssocQueryString - ASSOCSTR_COMMAND (1)
+                string assocCmd = QueryAssoc(1 /* ASSOCSTR_COMMAND */, ".pdf");
+                if (IsOurApp(assocCmd)) return true;
+
+                // 5. Checa HKCU\Software\Classes\.pdf (associação direta do usuário)
+                using (var hkcuPdfKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\.pdf"))
                 {
-                    var sb = new StringBuilder((int)length);
-                    AssocQueryString(0, 2, ".pdf", null, sb, ref length);
-                    string currentExe = sb.ToString();
-                    if (!string.IsNullOrEmpty(currentExe) && currentExe.Contains(targetExeName, StringComparison.OrdinalIgnoreCase))
+                    if (hkcuPdfKey != null)
                     {
-                        return true;
+                        string defVal = hkcuPdfKey.GetValue("") as string ?? "";
+                        if (IsOurApp(defVal)) return true;
+                    }
+                }
+
+                // 6. Checa HKCR\.pdf (visão combinada do sistema / ClassesRoot)
+                using (var hkcrPdfKey = Registry.ClassesRoot.OpenSubKey(@".pdf"))
+                {
+                    if (hkcrPdfKey != null)
+                    {
+                        string defVal = hkcrPdfKey.GetValue("") as string ?? "";
+                        if (IsOurApp(defVal)) return true;
                     }
                 }
             }
             catch {}
 
             return false;
+        }
+
+        private static string QueryAssoc(uint strType, string extension)
+        {
+            try
+            {
+                uint length = 0;
+                AssocQueryString(0, strType, extension, null, null, ref length);
+                if (length > 0)
+                {
+                    var sb = new StringBuilder((int)length);
+                    uint res = AssocQueryString(0, strType, extension, null, sb, ref length);
+                    if (res == 0 || sb.Length > 0)
+                    {
+                        return sb.ToString();
+                    }
+                }
+            }
+            catch { }
+            return string.Empty;
         }
 
         public static bool IsDismissed(bool isLite = true)
@@ -105,6 +146,8 @@ namespace CCPDF.Services
         {
             try
             {
+                DismissPrompt(isLite);
+
                 string progId = isLite ? "CCPDF.Document" : "CCPDF.Document";
                 string appName = isLite ? "CCPDF" : "CCPDF";
                 string exeName = isLite ? "CCPDF.exe" : "CCPDF.exe";
@@ -151,6 +194,20 @@ namespace CCPDF.Services
                     using var cmdKey = appKey.CreateSubKey(@"shell\open\command");
                     cmdKey.SetValue("", $"\"{currentExePath}\" \"%1\"");
                 }
+
+                // Atualiza também chaves legadas para apontar para o executável atual
+                try
+                {
+                    using var legacyProgKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\FtPdf.Document\shell\open\command");
+                    legacyProgKey.SetValue("", $"\"{currentExePath}\" \"%1\"");
+                }
+                catch { }
+                try
+                {
+                    using var legacyAppKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Applications\FtPdfLite.exe\shell\open\command");
+                    legacyAppKey.SetValue("", $"\"{currentExePath}\" \"%1\"");
+                }
+                catch { }
 
                 // 4. Registra Windows Capabilities para tela de Aplicativos Padrão do Windows
                 string regAppPath = isLite ? @"Software\CCPDF" : @"Software\CCPDF";

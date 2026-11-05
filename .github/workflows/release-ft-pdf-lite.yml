@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Tag de versão do release (ex: v2.6.0)'
+        description: 'Tag de versão do release (ex: v2.7.0)'
         required: false
-        default: 'v2.6.0'
+        default: 'v2.7.0'
 
 jobs:
   build-and-release-lite:
