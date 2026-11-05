@@ -7,7 +7,7 @@ Esta regra define o protocolo obrigatório para desenvolvimento, testes, compila
    - NUNCA disparar compilações nem enviar nada ao Git automaticamente durante as rodadas de edição.
 
 2. **Área de Trabalho (Apenas Arquivo `.bat` de Teste Bruto)**:
-   - Na Área de Trabalho deve permanecer **exclusivamente o arquivo `.bat` de teste local** (`Testar FT PDF Lite.bat`).
+   - Na Área de Trabalho deve permanecer **exclusivamente o arquivo `.bat` de teste local** (`Testar CCPDF.bat`).
    - Esse script executa diretamente os arquivos brutos via `dotnet run`, permitindo testes imediatos das alterações sem gerar compilações prévias.
    - NUNCA salvar executáveis `.exe` pesados nem criar pastas na Área de Trabalho (para evitar que ferramentas como o Google Drive gerem pastas temporárias como `.tmp.driveupload`).
 

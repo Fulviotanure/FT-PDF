@@ -5,6 +5,7 @@
 publish/
 publish-ft-pdf/
 publish-ft-pdf-lite/
+publish-ccpdf/
 compilacoes/
 *.zip
 

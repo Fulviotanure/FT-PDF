@@ -3,10 +3,10 @@ chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 echo =============================================================
-echo        COMPILADOR LOCAL FT PDF LITE (Zero Dependência .NET)
+echo             COMPILADOR LOCAL CCPDF (Zero Dependência .NET)
 echo =============================================================
 echo.
-set /p VER="Digite a versão para compilar (ex: v2.4.2 ou 2.4.2): "
+set /p VER="Digite a versão para compilar (ex: v2.6.0 ou 2.6.0): "
 if "%VER%"=="" (
     echo [ERRO] Versão não informada.
     pause
@@ -24,10 +24,10 @@ echo [1/2] Criando pasta de destino: %OUTDIR%
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
 echo.
-echo [2/2] Compilando FT PDF Lite (Arquivo Único - Standalone Self-Contained)...
-dotnet publish ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
+echo [2/2] Compilando CCPDF (Arquivo Único - Standalone Self-Contained)...
+dotnet publish ccpdf/CCPDF.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o "%OUTDIR%"
 if errorlevel 1 (
-    echo [ERRO] Falha ao compilar FT PDF Lite.
+    echo [ERRO] Falha ao compilar CCPDF.
     pause
     exit /b 1
 )
@@ -35,7 +35,7 @@ if errorlevel 1 (
 echo.
 echo =============================================================
 echo 🎉 SUCESSO! Executável único gerado com sucesso em:
-echo    %OUTDIR%\FtPdfLite.exe
+echo    %OUTDIR%\CCPDF.exe
 echo.
 echo Agora você pode testar diretamente na pasta 'compilacoes\%VER%\'!
 echo Quando estiver pronto para lançar ao público, use 'publicar_versao.bat'.

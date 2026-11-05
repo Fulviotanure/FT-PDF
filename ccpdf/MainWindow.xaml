@@ -1,0 +1,967 @@
+<Window x:Class="CCPDF.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CCPDF - Leitor e Validador"
+        Icon="Assets/app.ico"
+        Width="1180" Height="700"
+        MinWidth="760" MinHeight="450"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BackgroundBrush}"
+        Foreground="{DynamicResource TextPrimary}"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        RenderOptions.ClearTypeHint="Enabled"
+        FontFamily="Segoe UI"
+        AllowDrop="True"
+        Drop="Window_Drop">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="44" 
+                      ResizeBorderThickness="6" 
+                      CornerRadius="0" 
+                      GlassFrameThickness="0" 
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.InputBindings>
+        <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenFileCommand}" />
+        <KeyBinding Key="W" Modifiers="Control" Command="{Binding CloseFileCommand}" />
+        <KeyBinding Key="S" Modifiers="Control" Command="{Binding SaveFileCommand}" />
+    </Window.InputBindings>
+
+    <!-- Outer Root Border for rounded corners when window is normal size (medium) -->
+    <Border x:Name="WindowRootBorder" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="10"
+            HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Grid x:Name="RootGrid" Background="{DynamicResource BackgroundBrush}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <Grid.RowDefinitions>
+                <!-- Integrated Custom Titlebar with Tabs (Height: 44) -->
+                <RowDefinition Height="44" />
+                <!-- Main Content Area -->
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- ==================== CUSTOM INTEGRATED TITLEBAR ==================== -->
+            <Border x:Name="TitleBarBorder" Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1"
+                    CornerRadius="9,9,0,0"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown"
+                    AllowDrop="True" Drop="TabsBar_Drop" DragOver="TabsBar_DragOver">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <!-- Left: Brand Logo & App Name -->
+                        <ColumnDefinition Width="Auto" />
+                        <!-- Center: Integrated Tabs Strip -->
+                        <ColumnDefinition Width="*" />
+                        <!-- Right: Custom Window Controls (Theme, Min, Max, Close) -->
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Left Branding: Clean Logo & Name -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,12,0"
+                                Background="Transparent">
+                        <Image Source="Assets/logo.png" Width="22" Height="22" Margin="0,0,8,0" 
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <TextBlock x:Name="TxtBrandName" Text="CCPDF" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" />
+                    </StackPanel>
+
+                    <!-- Center: Seamless Document Tabs Strip -->
+                    <ScrollViewer x:Name="ScrollTabs" Grid.Column="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled"
+                                  VerticalAlignment="Bottom" HorizontalAlignment="Left" Background="Transparent"
+                                  SizeChanged="ScrollTabs_SizeChanged"
+                                  AllowDrop="True" Drop="TabsBar_Drop" DragOver="TabsBar_DragOver">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Background="Transparent">
+                            <!-- Dynamic Document Tabs -->
+                            <StackPanel x:Name="PanelTabs" Orientation="Horizontal" VerticalAlignment="Bottom"
+                                        Background="Transparent" />
+
+                            <!-- Add Tab Button (+) -->
+                            <Button x:Name="BtnNewTab" Content="+" Click="BtnOpenFile_Click"
+                                    WindowChrome.IsHitTestVisibleInChrome="True"
+                                    Width="30" Height="30" VerticalAlignment="Center"
+                                    Background="Transparent" Foreground="{DynamicResource TextSecondary}" FontSize="17" FontWeight="Normal"
+                                    Padding="0" Margin="4,0,8,2" BorderThickness="0" Cursor="Hand"
+                                    ToolTip="Nova Aba (Ctrl+T / Ctrl+O)">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="5">
+                                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-2,0,0"/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                           <Setter TargetName="bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                           <Setter Property="Foreground" Value="{DynamicResource AccentPrimary}" />
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- Right: Custom Integrated Controls (Theme Toggle, Minimize, Maximize, Close) -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Stretch"
+                                WindowChrome.IsHitTestVisibleInChrome="True">
+                        <!-- Modern Vector Theme Toggle Button (Dark / Light Mode) -->
+                        <Button x:Name="BtnToggleTheme" Click="BtnToggleTheme_Click"
+                                Width="38" Height="44" Background="Transparent"
+                                BorderThickness="0" Cursor="Hand" ToolTip="Alternar Modo de Tema (Alt+T)" Margin="0,0,2,0">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="bd" Background="Transparent" Width="30" Height="30" CornerRadius="6"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                    </Trigger>
+                                                    <Trigger Property="IsPressed" Value="True">
+                                                        <Setter TargetName="bd" Property="Opacity" Value="0.65" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                            <Path x:Name="PathThemeIcon" Width="16" Height="16" Stretch="Uniform"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center" SnapsToDevicePixels="True" />
+                        </Button>
+
+                        <!-- Minimize Button -->
+                        <Button x:Name="BtnMinimize" Content="🗕" Click="BtnMinimize_Click"
+                                Width="46" Height="44" Background="Transparent" Foreground="{DynamicResource TextSecondary}" FontSize="11"
+                                BorderThickness="0" Cursor="Hand" ToolTip="Minimizar">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource TitleBarHoverFg}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+
+                        <!-- Maximize / Restore Button -->
+                        <Button x:Name="BtnMaximize" Content="🗖" Click="BtnMaximize_Click"
+                                Width="46" Height="44" Background="Transparent" Foreground="{DynamicResource TextSecondary}" FontSize="11"
+                                BorderThickness="0" Cursor="Hand" ToolTip="Maximizar / Restaurar">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource TitleBarHoverFg}" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+
+                        <!-- Close Button -->
+                        <Button x:Name="BtnCloseWindow" Content="✕" Click="BtnCloseWindow_Click"
+                                Width="48" Height="44" Background="Transparent" Foreground="{DynamicResource TextSecondary}" FontSize="12"
+                                BorderThickness="0" Cursor="Hand" ToolTip="Fechar">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="bd" Background="{TemplateBinding Background}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#E11D48" />
+                                                        <Setter Property="Foreground" Value="White" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+        <!-- ==================== MAIN CONTENT ROW ==================== -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <!-- Column 0: Left Sidebar: Core Actions (Width: 60) -->
+                <ColumnDefinition Width="60" />
+                <!-- Column 1: Page Navigator Sidebar (Width: 0 or 230) -->
+                <ColumnDefinition x:Name="ColPageSidebar" Width="0" />
+                <!-- Column 2: Center: Native Vector Document Viewer Area -->
+                <ColumnDefinition Width="*" MinWidth="350" />
+                <!-- Column 3: Splitter for Validation Panel -->
+                <ColumnDefinition Width="Auto" />
+                <!-- Column 4: Right: Validation & Notepad Panel -->
+                <ColumnDefinition x:Name="ColNotepad" Width="0" MaxWidth="900" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ==================== COLUMN 0: LEFT SIDEBAR: CORE ACTIONS ==================== -->
+            <Border x:Name="BorderLeftSidebar" Grid.Column="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0">
+                <Grid Margin="0,10">
+                    <Grid.RowDefinitions>
+                        <!-- Top actions: Open, Save, Validate, Pages -->
+                        <RowDefinition Height="*" />
+                        <!-- Bottom tool: Settings -->
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Core Document Actions -->
+                    <StackPanel Grid.Row="0">
+                        <!-- Open File -->
+                        <Button x:Name="BtnOpenFile" Content="📂" ToolTip="Abrir Arquivo PDF (Ctrl+O)" Click="BtnOpenFile_Click"
+                                Width="44" Height="44" Margin="0,0,0,8" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentPrimary}" 
+                                FontSize="18" BorderThickness="0" Cursor="Hand">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+
+                        <!-- Quick Save Copy -->
+                        <Button x:Name="BtnQuickSave" Content="💾" ToolTip="Salvar Cópia do PDF (Ctrl+S)" Click="BtnQuickSave_Click"
+                                Width="44" Height="44" Margin="0,0,0,8" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentPrimary}" 
+                                FontSize="18" BorderThickness="0" Cursor="Hand" Visibility="Collapsed">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+
+                        <!-- Validate / Diagnostics Button -->
+                        <Button x:Name="BtnToggleNotepad" Content="🔍" ToolTip="Validar Integridade e Bloco de Notas" Click="BtnToggleNotepad_Click"
+                                Width="44" Height="44" Margin="0,0,0,8" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentPrimary}" 
+                                FontSize="18" BorderThickness="0" Cursor="Hand" Visibility="Collapsed">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+
+                        <!-- Page Navigator Sidebar Button -->
+                        <Button x:Name="BtnTogglePages" Content="📑" ToolTip="Visualizador de Páginas" Click="BtnTogglePages_Click"
+                                Width="44" Height="44" Margin="0,0,0,8" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentPrimary}" 
+                                FontSize="18" BorderThickness="0" Cursor="Hand" Visibility="Collapsed">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Settings (Bottom) -->
+                    <StackPanel Grid.Row="1">
+                        <Rectangle x:Name="SidebarSeparator" Height="1" Fill="{DynamicResource BorderBrush}" Margin="8,4,8,8" />
+                        <Button x:Name="BtnSettings" Content="⚙️" ToolTip="Configurações (Leitor Padrão e Atualizações)" Click="BtnSettings_Click"
+                                Width="44" Height="44" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextSecondary}" 
+                                FontSize="18" BorderThickness="0" Cursor="Hand">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ==================== COLUMN 1: PAGE NAVIGATOR SIDEBAR ==================== -->
+            <Border x:Name="PanelPageSidebar" Grid.Column="1" Background="{DynamicResource SurfaceBrush}" 
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,1,0" Visibility="Collapsed">
+                <Grid Margin="10">
+                    <Grid.RowDefinitions>
+                        <!-- Header: Title + Page Count + Close Button -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Scrollable Pages List (Thumbnails) -->
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="📑" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                            <TextBlock x:Name="TxtPageSidebarTitle" Text="PÁGINAS" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
+                            <Border x:Name="BadgePageCount" Background="{DynamicResource CardBrush}" CornerRadius="4" Padding="5,1" Margin="6,0,0,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtPageCountBadge" Text="0 pág." FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource AccentPrimary}" />
+                            </Border>
+                        </StackPanel>
+                        <Button x:Name="BtnClosePageSidebar" Grid.Column="1" Content="◀" ToolTip="Recolher painel de páginas" Click="BtnClosePageSidebar_Click"
+                                Width="24" Height="24" Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0" Cursor="Hand" FontSize="10">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                            </Button.Resources>
+                        </Button>
+                    </Grid>
+
+                    <!-- Page Cards List -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="PanelPageCards" />
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- ==================== COLUMN 2: CENTER VIEWER & EMPTY STATE & SPLIT SCREEN ==================== -->
+            <Grid x:Name="GridCenterViewer" Grid.Column="2" Background="{DynamicResource BackgroundBrush}">
+                <!-- Empty State (When no documents are open) -->
+                <Grid x:Name="PanelEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <StackPanel MaxWidth="460" HorizontalAlignment="Center">
+                        <Border x:Name="BorderEmptyIcon" Width="88" Height="88" CornerRadius="22" Background="{DynamicResource CardBrush}" 
+                                BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1.5" HorizontalAlignment="Center" Margin="0,0,0,20">
+                            <Image Source="Assets/logo.png" Width="68" Height="68" 
+                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Border>
+
+                        <TextBlock x:Name="TxtEmptyTitle" Text="CCPDF" FontSize="20" FontWeight="Bold" 
+                                   Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center" Margin="0,0,0,6" />
+                        
+                        <TextBlock x:Name="TxtEmptyDesc" Text="Leitor e validador ultraleve. Abra um arquivo PDF para leitura vetorial nativa e diagnóstico instantâneo de integridade." 
+                                   Foreground="{DynamicResource TextSecondary}" FontSize="13" TextAlignment="Center" 
+                                   TextWrapping="Wrap" HorizontalAlignment="Center" Margin="0,0,0,22" />
+
+                        <Button x:Name="BtnEmptyOpen" Content="Selecionar Arquivo PDF" Click="BtnOpenFile_Click"
+                                Background="{DynamicResource AccentPrimary}" Foreground="White" FontSize="13.5" FontWeight="SemiBold"
+                                Padding="20,10" HorizontalAlignment="Center" BorderThickness="0" Cursor="Hand">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="8" /></Style>
+                            </Button.Resources>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Active Vector Viewer Area -->
+                <Grid x:Name="PanelActiveContent" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <!-- Primary Viewer (Left Screen) -->
+                        <ColumnDefinition x:Name="ColPrimaryViewer" Width="*" />
+                        <!-- Split Screen Splitter -->
+                        <ColumnDefinition x:Name="ColSplitSplitter" Width="Auto" />
+                        <!-- Secondary Viewer (Right Screen) -->
+                        <ColumnDefinition x:Name="ColSecondaryViewer" Width="0" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Primary Document Viewer (Native Pdfium) -->
+                    <Grid Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <!-- Zoom & Page Quick Bar -->
+                            <RowDefinition Height="36"/>
+                            <!-- Pages Scroll Area -->
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Floating Zoom Bar -->
+                        <Border x:Name="BorderZoomBar" Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="12,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Page indicator & Loading indicator -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtViewerPageInfo" Text="Página 1 de 1" 
+                                               FontSize="12" FontWeight="Medium" Foreground="{DynamicResource TextSecondary}" 
+                                               VerticalAlignment="Center"/>
+
+                                    <!-- Analysis Feedback Indicator Badge -->
+                                    <Border x:Name="BadgeAnalysisLoading" Margin="14,0,0,0"
+                                            Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1"
+                                            CornerRadius="12" Padding="8,1.5" Visibility="Collapsed" VerticalAlignment="Center">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBlock Text="⏳" FontSize="10" Margin="0,0,5,0" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="TxtAnalysisLoading" Text="Analisando integridade..." 
+                                                       FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentText}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Center: Search Box Container with Counter and Up/Down navigation -->
+                                <Border x:Name="BorderViewerSearch" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                        CornerRadius="6" Height="26" Padding="6,0,2,0">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <!-- Search Icon -->
+                                        <TextBlock Text="🔍" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,5,0" />
+
+                                        <!-- Search Input with Placeholder -->
+                                        <Grid VerticalAlignment="Center">
+                                            <TextBox x:Name="TxtViewerSearch" Width="140" Height="22"
+                                                     Background="Transparent" BorderThickness="0"
+                                                     Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource AccentPrimary}"
+                                                     FontSize="11.5" VerticalContentAlignment="Center"
+                                                     TextChanged="TxtViewerSearch_TextChanged"
+                                                     PreviewKeyDown="TxtViewerSearch_PreviewKeyDown" />
+                                            <TextBlock x:Name="TxtSearchPlaceholder" Text="Localizar no PDF... (Ctrl+F)"
+                                                       FontSize="11" Foreground="{DynamicResource TextMuted}"
+                                                       VerticalAlignment="Center" Margin="2,0,0,0"
+                                                       IsHitTestVisible="False" />
+                                        </Grid>
+
+                                        <!-- Clear Search Button (✕) -->
+                                        <Button x:Name="BtnClearSearch" Content="✕" Width="18" Height="20"
+                                                Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                                FontSize="10" Cursor="Hand" ToolTip="Limpar pesquisa (Esc)"
+                                                Visibility="Collapsed" Click="BtnClearSearch_Click" Margin="1,0,2,0">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
+
+                                        <!-- Result Counter Badge -->
+                                        <Border x:Name="BadgeSearchCount" Background="{DynamicResource BorderBrush}" CornerRadius="4" Padding="5,1" Margin="2,0,4,0" Visibility="Collapsed" VerticalAlignment="Center">
+                                            <TextBlock x:Name="TxtSearchCount" Text="0 de 0" 
+                                                       FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentText}"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+
+                                        <!-- Separator -->
+                                        <Border x:Name="SearchSeparator" Width="1" Height="14" Background="{DynamicResource BorderBrush}" Margin="2,0,3,0" />
+
+                                        <!-- Up Arrow: Anterior -->
+                                        <Button x:Name="BtnSearchPrev" Content="▲" Width="22" Height="22"
+                                                Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                                FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                                ToolTip="Item anterior (Shift+Enter ou Seta Cima)"
+                                                IsEnabled="False" Click="BtnSearchPrev_Click">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
+
+                                        <!-- Down Arrow: Próximo / Posterior -->
+                                        <Button x:Name="BtnSearchNext" Content="▼" Width="22" Height="22"
+                                                Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                                FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                                ToolTip="Próximo item (Enter ou Seta Baixo)"
+                                                IsEnabled="False" Click="BtnSearchNext_Click">
+                                            <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                        </Button>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Zoom controls -->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="BtnZoomOut" Content="−" Click="BtnZoomOut_Click"
+                                            Width="26" Height="24" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}"
+                                            FontSize="16" FontWeight="Bold" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Diminuir zoom (Ctrl+-)">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                    <TextBlock x:Name="TxtZoomLevel" Text="100%" 
+                                               Width="54" TextAlignment="Center" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="6,0"/>
+                                    <Button x:Name="BtnZoomIn" Content="+" Click="BtnZoomIn_Click"
+                                            Width="26" Height="24" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}"
+                                            FontSize="16" FontWeight="Bold" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Aumentar zoom (Ctrl++)">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                    <Button x:Name="BtnZoomFit" Content="⊞ Ajustar" Click="BtnZoomFit_Click"
+                                            Height="24" Padding="8,0" Margin="8,0,0,0"
+                                            Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentText}"
+                                            FontSize="11" FontWeight="Medium" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Ajustar à largura">
+                                        <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="4"/></Style></Button.Resources>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Native Pdfium WindowsFormsHost Viewer -->
+                        <WindowsFormsHost x:Name="PdfHost" Grid.Row="1" Background="{DynamicResource BackgroundBrush}" />
+                    </Grid>
+
+                    <!-- Splitter between Primary and Secondary Screen -->
+                    <GridSplitter Grid.Column="1" x:Name="SplitViewSplitter" Width="5" 
+                                  HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                                  Background="{DynamicResource BorderBrush}" Cursor="SizeWE" Visibility="Collapsed" />
+
+                    <!-- Secondary Document Viewer (Split Screen) -->
+                    <Grid Grid.Column="2" x:Name="PanelSplitViewer" Visibility="Collapsed" Background="{DynamicResource SurfaceBrush}">
+                        <Grid.RowDefinitions>
+                            <!-- Split Screen Header with Tab Title, Unir Aba and Close -->
+                            <RowDefinition Height="36" />
+                            <!-- Split WebView2 -->
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Split Header Bar (draggable back to tabs!) -->
+                        <Border Grid.Row="0" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1"
+                                x:Name="SplitHeaderBar" 
+                                PreviewMouseLeftButtonDown="SplitHeaderBar_PreviewMouseLeftButtonDown"
+                                PreviewMouseMove="SplitHeaderBar_PreviewMouseMove"
+                                PreviewMouseLeftButtonUp="SplitHeaderBar_PreviewMouseLeftButtonUp"
+                                Cursor="Hand" ToolTip="Arraste de volta para a barra superior ou clique em Unir Aba">
+                            <Grid Margin="10,0,6,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Left: Icon + File Name -->
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="📄" FontSize="11" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="TxtSplitFileName" Text="Documento Dividido.pdf" FontSize="11.5" 
+                                               FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" TextTrimming="CharacterEllipsis" 
+                                               MaxWidth="240" VerticalAlignment="Center" />
+                                    <Border x:Name="BadgeSplitTab" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1" 
+                                            CornerRadius="4" Padding="5,1.5" Margin="8,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtBadgeSplit" Text="TELA DIVIDIDA" FontSize="8.5" FontWeight="Bold" Foreground="{DynamicResource AccentText}" />
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- Right: Action Buttons (Unir Aba, Fechar Split) -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <!-- Unir em Aba Button -->
+                                    <Button x:Name="BtnMergeSplitTab" Content="⤢ Unir Aba" Click="BtnMergeSplitTab_Click"
+                                            Background="{DynamicResource CardBrush}" Foreground="{DynamicResource AccentText}" FontSize="11" FontWeight="Medium"
+                                            Padding="8,3" Margin="0,0,6,0" BorderThickness="0" Cursor="Hand"
+                                            ToolTip="Unir este documento de volta como uma aba normal">
+                                        <Button.Resources>
+                                            <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                        </Button.Resources>
+                                    </Button>
+
+                                    <!-- Close Split Screen Button -->
+                                    <Button x:Name="BtnCloseSplitTab" Content="✕" Click="BtnCloseSplitTab_Click"
+                                            Width="24" Height="24" Background="Transparent" Foreground="{DynamicResource TextSecondary}" 
+                                            FontSize="11" BorderThickness="0" Cursor="Hand" ToolTip="Fechar tela dividida">
+                                        <Button.Resources>
+                                            <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                        </Button.Resources>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Split Native Pdfium WindowsFormsHost Viewer -->
+                        <WindowsFormsHost x:Name="SplitPdfHost" Grid.Row="1" Background="{DynamicResource BackgroundBrush}" />
+                    </Grid>
+                </Grid>
+
+                <!-- Opening File Overlay (Immediate feedback for large / loading files) -->
+                <Grid x:Name="PanelOpeningFeedback" Visibility="Collapsed" Background="#E6070A10" 
+                      VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Panel.ZIndex="999">
+                    <Border Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1.5" CornerRadius="14"
+                            Padding="28,24" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#000000" BlurRadius="28" ShadowDepth="6" Opacity="0.5"/>
+                        </Border.Effect>
+                        <StackPanel HorizontalAlignment="Center">
+                            <Border Width="56" Height="56" CornerRadius="16" Background="{DynamicResource CardBrush}" 
+                                    BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1.5" HorizontalAlignment="Center" Margin="0,0,0,16">
+                                <TextBlock x:Name="TxtOpeningIcon" Text="⏳" FontSize="26" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+
+                            <TextBlock x:Name="TxtOpeningTitle" Text="Carregando Arquivo PDF..." FontSize="16" FontWeight="Bold" 
+                                       Foreground="{DynamicResource TextPrimary}" HorizontalAlignment="Center" Margin="0,0,0,6" TextAlignment="Center"/>
+
+                            <TextBlock x:Name="TxtOpeningDetail" Text="Arquivo grande detectado. Otimizando leitura e preparando visualização rápida..." 
+                                       FontSize="12.5" Foreground="{DynamicResource TextSecondary}" TextAlignment="Center" 
+                                       TextWrapping="Wrap" Margin="0,0,0,18" LineHeight="17" HorizontalAlignment="Center"/>
+
+                            <ProgressBar x:Name="ProgressBarOpening" IsIndeterminate="True" Height="4" 
+                                         Background="{DynamicResource BackgroundBrush}" Foreground="{DynamicResource AccentPrimary}" BorderThickness="0" Margin="0,0,0,10"/>
+
+                            <TextBlock x:Name="TxtOpeningBadge" Text="CCPDF • Leitura Vetorial de Alta Performance" 
+                                       FontSize="10.5" Foreground="{DynamicResource TextMuted}" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <!-- Grid Splitter for Resizing Validation Panel -->
+            <GridSplitter Grid.Column="3" x:Name="SplitterBar" Width="5" HorizontalAlignment="Center" 
+                          VerticalAlignment="Stretch" Background="{DynamicResource BorderBrush}" Cursor="SizeWE" Visibility="Collapsed" />
+
+            <!-- ==================== RIGHT: VALIDATION & NOTEPAD PANEL ==================== -->
+            <Border x:Name="PanelNotepad" Grid.Column="4" Background="{DynamicResource SurfaceBrush}" 
+                    BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1,0,0,0" Visibility="Collapsed">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <!-- Top Progress Bar (When Analyzing) -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Panel Header (Document Type & Score) -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Import Verdict Banner -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Diagnostics & Properties Area -->
+                        <RowDefinition Height="Auto" />
+                        <!-- Text Editor with Notepad Search -->
+                        <RowDefinition Height="*" />
+                        <!-- Bottom Status Bar -->
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Top Indeterminate Progress Bar (Shows when analyzing) -->
+                    <ProgressBar Grid.Row="0" x:Name="ProgressBarAnalysis" Height="3" IsIndeterminate="True" 
+                                 Background="Transparent" Foreground="{DynamicResource AccentPrimary}" BorderThickness="0" 
+                                 Margin="0,0,0,8" Visibility="Collapsed" />
+
+                    <!-- Header: Integrity Percentage (Top) + Document Classification (Bottom) with Auto-Wrap -->
+                    <Border x:Name="BorderNotepadHeader" Grid.Row="1" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                            CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <!-- Top: Percentage Badge & Close Button -->
+                                <RowDefinition Height="Auto" />
+                                <!-- Bottom: Classification Title & Document Type -->
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <!-- Top Row: Integrity Badge (Left) + Close Button (Right) -->
+                            <Grid Grid.Row="0" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border Grid.Column="0" x:Name="BadgeIntegrity" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1" 
+                                        CornerRadius="6" Padding="10,5" HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtIntegrityScore" Text="100% Integridade" 
+                                                   FontSize="12.5" FontWeight="Bold" Foreground="{DynamicResource AccentText}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="TxtIntegrityStatusText" Text="Alta Integridade" 
+                                                   FontSize="11" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Button x:Name="BtnCloseNotepad" Grid.Column="1" Content="✕" Click="BtnCloseNotepad_Click"
+                                        Width="26" Height="26" Background="Transparent" Foreground="{DynamicResource TextSecondary}" 
+                                        BorderThickness="0" Cursor="Hand" ToolTip="Recolher Painel" VerticalAlignment="Center" />
+                            </Grid>
+
+                            <!-- Bottom Row: Classification Label + Document Type with Full Auto-Wrap -->
+                            <StackPanel Grid.Row="1">
+                                <TextBlock x:Name="TxtHeaderClassifLabel" Text="CLASSIFICAÇÃO DO ARQUIVO" FontSize="9.5" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" />
+                                <TextBlock x:Name="TxtHeaderDocType" Text="Texto Vetorial Nativo" 
+                                           FontSize="14" FontWeight="ExtraBold" Foreground="{DynamicResource AccentPrimary}" 
+                                           TextWrapping="Wrap" Margin="0,3,0,0" LineHeight="18" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- Import Verdict & Notice Banners -->
+                    <StackPanel Grid.Row="2" Margin="0,0,0,8">
+                        <!-- Upper Balloon: Import Verdict -->
+                        <Border x:Name="BorderImportVerdict" Background="{DynamicResource AccentPillBg}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1.5" 
+                                CornerRadius="8" Padding="12,9" Margin="0,0,0,6">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtImportVerdictIcon" Text="✅" FontSize="14" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                <TextBlock x:Name="TxtImportVerdict" Text="DOCUMENTO IMPORTÁVEL" 
+                                           FontSize="12.5" FontWeight="Bold" Foreground="{DynamicResource AccentText}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Lower Balloon: Notice (Balão Diferente Embaixo) -->
+                        <Border x:Name="BorderRetaguardaNotice" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                CornerRadius="8" Padding="10,7">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TxtRetaguardaNoticeIcon" Grid.Column="0" Text="ℹ️" FontSize="11" Margin="0,1,6,0" VerticalAlignment="Top" />
+                                <TextBlock x:Name="TxtRetaguardaNotice" Grid.Column="1" 
+                                           Text="Atenção: caso mesmo como importável ele não importe, envie para a retaguarda." 
+                                           FontSize="10.5" Foreground="{DynamicResource TextSecondary}" FontStyle="Italic" TextWrapping="Wrap" LineHeight="14" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- Expandable Properties & Diagnostics Section -->
+                    <Border x:Name="BorderDiagnostics" Grid.Row="3" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                            CornerRadius="8" Padding="10" Margin="0,0,0,8">
+                        <StackPanel>
+                            <!-- Structured Metrics Grid: Separate Images & Scanned Pages, Dedicated Row for Formatting -->
+                            <Grid Margin="0,0,0,8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Row 0: Sinais Estranhos | Total de Caracteres -->
+                                <TextBlock Grid.Row="0" Grid.Column="0" x:Name="TxtDiagStrangeChars" Text="Sinais Estranhos: 0" 
+                                           FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtDiagCharCount" Text="Total de Caracteres: 0" 
+                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
+
+                                <!-- Row 1: Imagens | Páginas Escaneadas (SEPARADOS!) -->
+                                <TextBlock Grid.Row="1" Grid.Column="0" x:Name="TxtDiagImages" Text="Imagens: 0" 
+                                           FontSize="11.5" Foreground="{DynamicResource TextPrimary}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,4,4" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtDiagScannedPages" Text="Páginas Escaneadas: 0" 
+                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="4,0,0,4" HorizontalAlignment="Right" />
+
+                                <!-- Row 2: Formatação (Full width, quebra automática sem sobrepor nada) -->
+                                <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" x:Name="TxtDiagFormatting" Text="Formatação: Bem Formatado" 
+                                           FontSize="11" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,0" LineHeight="15" />
+                            </Grid>
+
+                            <ScrollViewer MaxHeight="105" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,0,8">
+                                <TextBlock x:Name="TxtDiagWarning" Text="Texto analisado com alta integridade." 
+                                           FontSize="11" Foreground="{DynamicResource AccentText}" TextWrapping="Wrap" />
+                            </ScrollViewer>
+
+                            <Expander x:Name="ExpanderProps" Header="ℹ️ Propriedades do Documento" 
+                                      Foreground="{DynamicResource TextSecondary}" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,8">
+                                <Border x:Name="BorderPropsContent" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" 
+                                        CornerRadius="6" Padding="8" Margin="0,4,0,0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="100" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Tamanho:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TxtPropFileSize" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Versão PDF:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="TxtPropPdfVersion" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Dimensões:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="TxtPropDimensions" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Orientação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="TxtPropOrientation" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Autor / Produtor:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="TxtPropAuthorProducer" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Criação:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="TxtPropCreationDate" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+
+                                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Segurança:" Foreground="{DynamicResource TextMuted}" FontSize="11" Margin="0,1" />
+                                        <TextBlock Grid.Row="6" Grid.Column="1" x:Name="TxtPropSecurity" Text="-" Foreground="{DynamicResource TextPrimary}" FontSize="11" Margin="0,1" />
+                                    </Grid>
+                                </Border>
+                            </Expander>
+
+                            <WrapPanel Orientation="Horizontal">
+                                <Button x:Name="BtnToggleRawText" Content="Exibir Texto Cru" Click="BtnToggleRawText_Click"
+                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                    <Button.Resources>
+                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                    </Button.Resources>
+                                </Button>
+
+                                <Button x:Name="BtnCopyAllText" Content="📋 Copiar Tudo" Click="BtnCopyText_Click"
+                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                    <Button.Resources>
+                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                    </Button.Resources>
+                                </Button>
+
+                                <Button x:Name="BtnSaveTxt" Content="💾 Salvar .txt" Click="BtnSaveTxt_Click"
+                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11" FontWeight="Medium"
+                                        Padding="8,5" Margin="0,0,6,4" Cursor="Hand">
+                                    <Button.Resources>
+                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                    </Button.Resources>
+                                </Button>
+
+                                <Button x:Name="BtnToggleWrap" Content="Quebrar Linha: ON" Click="BtnToggleWrap_Click"
+                                        Background="{DynamicResource CardBrush}" Foreground="{DynamicResource TextSecondary}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" FontSize="11"
+                                        Padding="8,5" Margin="0,0,0,4" Cursor="Hand">
+                                    <Button.Resources>
+                                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                                    </Button.Resources>
+                                </Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Text Editor with Dedicated Search Bar -->
+                    <Grid Grid.Row="4">
+                        <Grid.RowDefinitions>
+                            <!-- Search Bar for Notepad -->
+                            <RowDefinition Height="Auto" />
+                            <!-- Text Editor Area -->
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- Search Bar in Bloco de Notas -->
+                        <Border x:Name="BorderNotepadSearch" Grid.Row="0" Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Height="30" Padding="8,0,4,0" Margin="0,0,0,6">
+                            <Grid VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <!-- Search Icon -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Search Input with Placeholder -->
+                                    <ColumnDefinition Width="*" />
+                                    <!-- Clear Button -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Match Counter Badge -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Prev Button -->
+                                    <ColumnDefinition Width="Auto" />
+                                    <!-- Next Button -->
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Search Icon -->
+                                <TextBlock Grid.Column="0" Text="🔍" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" Margin="0,0,6,0" />
+
+                                <!-- Search Input with Placeholder -->
+                                <Grid Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBox x:Name="TxtNotepadSearch" Height="22"
+                                             Background="Transparent" BorderThickness="0"
+                                             Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource AccentPrimary}"
+                                             FontSize="11.5" VerticalContentAlignment="Center"
+                                             TextChanged="TxtNotepadSearch_TextChanged"
+                                             PreviewKeyDown="TxtNotepadSearch_PreviewKeyDown" />
+                                    <TextBlock x:Name="TxtNotepadSearchPlaceholder" Text="Pesquisar no bloco de notas... (Ctrl+F)"
+                                               FontSize="11" Foreground="{DynamicResource TextMuted}"
+                                               VerticalAlignment="Center" Margin="2,0,0,0"
+                                               IsHitTestVisible="False" />
+                                </Grid>
+
+                                <!-- Clear Button (✕) -->
+                                <Button Grid.Column="2" x:Name="BtnClearNotepadSearch" Content="✕" Width="20" Height="20"
+                                        Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                        FontSize="10" Cursor="Hand" ToolTip="Limpar pesquisa (Esc)"
+                                        Visibility="Collapsed" Click="BtnClearNotepadSearch_Click" Margin="2,0">
+                                    <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                </Button>
+
+                                <!-- Result Counter Badge -->
+                                <Border Grid.Column="3" x:Name="BadgeNotepadSearchCount" Background="{DynamicResource BorderBrush}" CornerRadius="4" Padding="6,1.5" Margin="4,0" Visibility="Collapsed" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtNotepadSearchCount" Text="0 de 0" 
+                                               FontSize="10.5" FontWeight="SemiBold" Foreground="{DynamicResource AccentText}"
+                                               VerticalAlignment="Center" />
+                                </Border>
+
+                                <!-- Anterior (▲) -->
+                                <Button Grid.Column="4" x:Name="BtnNotepadSearchPrev" Content="▲" Width="22" Height="22"
+                                        Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                        FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                        ToolTip="Ocorrência anterior (Shift+Enter)"
+                                        IsEnabled="False" Click="BtnNotepadSearchPrev_Click" Margin="1,0">
+                                    <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                </Button>
+
+                                <!-- Próximo (▼) -->
+                                <Button Grid.Column="5" x:Name="BtnNotepadSearchNext" Content="▼" Width="22" Height="22"
+                                        Background="Transparent" Foreground="{DynamicResource TextSecondary}" BorderThickness="0"
+                                        FontSize="9" FontWeight="Bold" Cursor="Hand"
+                                        ToolTip="Próxima ocorrência (Enter)"
+                                        IsEnabled="False" Click="BtnNotepadSearchNext_Click" Margin="1,0">
+                                    <Button.Resources><Style TargetType="Border"><Setter Property="CornerRadius" Value="3"/></Style></Button.Resources>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Text Editor -->
+                        <Border x:Name="BorderTxtEditor" Grid.Row="1" Background="{DynamicResource BackgroundBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="6">
+                            <TextBox x:Name="TxtEditor" AcceptsReturn="True" AcceptsTab="True"
+                                     TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                     Background="Transparent" Foreground="{DynamicResource TextPrimary}" CaretBrush="{DynamicResource AccentPrimary}"
+                                     FontFamily="Consolas, Cascadia Code, Courier New" FontSize="12.5"
+                                     Padding="10" BorderThickness="0" TextChanged="TxtEditor_TextChanged" />
+                        </Border>
+                    </Grid>
+
+                    <!-- Bottom Status Bar -->
+                    <Grid Grid.Row="5" Margin="0,6,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock x:Name="TxtEditorStats" Text="Caracteres: 0 | Palavras: 0" 
+                                   FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
+
+                        <TextBlock x:Name="TxtEditorMode" Text="Modo: Layout Preservado" 
+                                   Grid.Column="1" FontSize="11" Foreground="{DynamicResource TextMuted}" VerticalAlignment="Center" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ==================== BANNER DISCRETO: LEITOR PADRÃO ==================== -->
+        <Border x:Name="BannerDefaultApp" Grid.Row="1" Visibility="Collapsed"
+                VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource AccentPrimary}" BorderThickness="1.5"
+                CornerRadius="8" Padding="14,8" Margin="20,0,20,14"
+                Panel.ZIndex="999">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="16" ShadowDepth="3" Opacity="0.4" Color="Black" />
+            </Border.Effect>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Path Grid.Column="0" Data="M16 12V4H17V2H7V4H8V12L6 14V16H11V22H13V16H18V14L16 12Z" 
+                      Fill="{DynamicResource AccentPrimary}" Width="14" Height="14" Stretch="Uniform" Margin="0,0,8,0" VerticalAlignment="Center" />
+
+                <TextBlock x:Name="TxtBannerDefault" Grid.Column="1" Text="Deseja definir o CCPDF como seu leitor padrão de PDF no Windows?" 
+                           FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,16,0" />
+
+                <Button x:Name="BtnSetDefaultBanner" Grid.Column="2" Content="OK, Definir como Padrão" Click="BtnSetDefaultBanner_Click"
+                        Background="{DynamicResource AccentPrimary}" Foreground="White" FontWeight="Bold" FontSize="11.5"
+                        Padding="12,5" BorderThickness="0" Cursor="Hand" Margin="0,0,8,0">
+                    <Button.Resources>
+                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                    </Button.Resources>
+                </Button>
+
+                <Button x:Name="BtnDismissDefaultBanner" Grid.Column="3" Content="✕" Click="BtnDismissDefaultBanner_Click"
+                        Width="22" Height="22" Background="Transparent" Foreground="{DynamicResource TextSecondary}" FontSize="11"
+                        BorderThickness="0" Cursor="Hand" ToolTip="Não perguntar novamente">
+                    <Button.Resources>
+                        <Style TargetType="Border"><Setter Property="CornerRadius" Value="4" /></Style>
+                    </Button.Resources>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+    </Border>
+</Window>

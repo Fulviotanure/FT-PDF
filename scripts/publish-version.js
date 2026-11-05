@@ -8,21 +8,21 @@ const rl = readline.createInterface({
 });
 
 console.log('\n=============================================================');
-console.log('   LANÇAMENTO OFICIAL FT PDF LITE (GITHUB ACTIONS)');
-console.log('   Arquivo Único Standalone Self-Contained');
+console.log('       LANÇAMENTO OFICIAL CCPDF (GITHUB ACTIONS)');
+console.log('       Arquivo Único Standalone Self-Contained');
 console.log('=============================================================');
 
-rl.question('Digite o número da versão para lançamento (ex: 2.4.2): ', (verInput) => {
+rl.question('Digite o número da versão para lançamento (ex: 2.6.0): ', (verInput) => {
   let rawVer = verInput.trim().replace(/^v/i, '').replace(/^lite-v/i, '');
 
   if (!rawVer || !/^\d+\.\d+(\.\d+)?$/.test(rawVer)) {
-    console.error(`\n❌ Versão inválida: "${verInput}". Use o formato X.Y ou X.Y.Z (ex: 2.4.2)`);
+    console.error(`\n❌ Versão inválida: "${verInput}". Use o formato X.Y ou X.Y.Z (ex: 2.6.0)`);
     rl.close();
     process.exit(1);
   }
 
   const tagName = `v${rawVer}`;
-  const label = `FT PDF Lite v${rawVer} (Arquivo Único)`;
+  const label = `CCPDF v${rawVer} (Arquivo Único)`;
 
   console.log('\n-------------------------------------------------------------');
   console.log(`📦 Aplicativo: ${label}`);
@@ -44,7 +44,7 @@ rl.question('Digite o número da versão para lançamento (ex: 2.4.2): ', (verIn
 
       console.log(`2. Criando commit de release (${tagName})...`);
       try {
-        execSync(`git commit -m "chore(release): ${tagName}"`, { stdio: 'inherit', cwd: rootDir });
+        execSync(`git commit -m "chore(release): ${tagName} - Transição FT-PDF para CCPDF"`, { stdio: 'inherit', cwd: rootDir });
       } catch (e) {
         console.log('   Nenhuma alteração pendente para commit.');
       }

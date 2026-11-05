@@ -1,4 +1,4 @@
-name: Release FT PDF Lite (Arquivo Único)
+name: Release CCPDF (Arquivo Único)
 
 permissions:
   contents: write
@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Tag de versão do release (ex: v2.4.2)'
+        description: 'Tag de versão do release (ex: v2.6.0)'
         required: false
-        default: 'v2.4.2'
+        default: 'v2.6.0'
 
 jobs:
   build-and-release-lite:
@@ -29,45 +29,53 @@ jobs:
         dotnet-version: '10.0.x'
 
     - name: Restore NuGet Dependencies (win-x64)
-      run: dotnet restore ft-pdf-lite/FtPdfLite.csproj -r win-x64
+      run: dotnet restore ccpdf/CCPDF.csproj -r win-x64
 
-    - name: Build FT PDF Lite
-      run: dotnet build ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 --no-restore
+    - name: Build CCPDF
+      run: dotnet build ccpdf/CCPDF.csproj -c Release -r win-x64 --no-restore
 
-    - name: Publish FT PDF Lite (Arquivo Único - Standalone SingleFile)
+    - name: Publish CCPDF (Arquivo Único - Standalone SingleFile)
       run: |
-        dotnet publish ft-pdf-lite/FtPdfLite.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o ./publish-ft-pdf-lite
+        dotnet publish ccpdf/CCPDF.csproj -c Release -r win-x64 -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --self-contained true -o ./publish-ccpdf
 
-    - name: Package Release ZIP
+    - name: Prepare Backward Compatibility & Package Release ZIPs
       shell: pwsh
       run: |
-        Compress-Archive -Path ./publish-ft-pdf-lite/FtPdfLite.exe -DestinationPath ./FT-PDF-Lite-Windows-x64.zip -Force
+        # Compatibilidade retroativa para usuários da v2.5.4 que procuram FtPdfLite.exe
+        Copy-Item -Path ./publish-ccpdf/CCPDF.exe -Destination ./publish-ccpdf/FtPdfLite.exe -Force
+        Compress-Archive -Path ./publish-ccpdf/CCPDF.exe -DestinationPath ./CCPDF-Windows-x64.zip -Force
+        Compress-Archive -Path ./publish-ccpdf/FtPdfLite.exe -DestinationPath ./FT-PDF-Lite-Windows-x64.zip -Force
 
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: FT-PDF-Lite-Windows-x64
-        path: ./publish-ft-pdf-lite/
+        name: CCPDF-Windows-x64
+        path: ./publish-ccpdf/
 
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.ref_name || inputs.version_tag }}
-        name: "FT PDF Lite ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)"
+        name: "CCPDF ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)"
         body: |
-          ### ⚡ Lançamento Oficial FT PDF Lite - ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)
+          ### ⚡ Lançamento Oficial CCPDF - ${{ github.ref_name || inputs.version_tag }} (Arquivo Único)
+          
+          O **FT PDF Lite** agora é **CCPDF (Conciliador Contábil PDF)**! Esta versão consolida uma reformulação completa de identidade visual, refinamento ergonômico e aprimoramento do motor de integridade documental.
           
           - **Executável Único (.exe):** 100% Standalone Self-Contained, zero dependência de .NET instalado.
-          - **PDFium Nativo Embutido:** Inicialização instantânea com aceleração de hardware.
-          - **Leitura Vetorial de Alta Fidelidade:** Múltiplas abas, suporte a senhas e ajuste automático de tela.
-          - **🔍 Validação e Diagnóstico de Integridade:** Classificação padronizada (`DOCUMENTO IMPORTÁVEL`, `DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS`, `DOCUMENTO NÃO IMPORTÁVEL`) e detecção de microimagens/lançamentos em figura.
-          - **📝 Bloco de Notas Integrado:** Extração limpa em texto cru e layout preservado.
-          - **Diretriz de Retaguarda:** Procedimento padronizado integrado no diagnóstico.
+          - **Nova Identidade Visual (CCPDF):** Nova logomarca corporativa, ícones em alta resolução e barra integrada.
+          - **🌿 Novo Tema Verde Pastel Suave:** Paleta em tom verde pastel suave para o modo claro, projetada especificamente para evitar fadiga visual em longas rotinas contábeis.
+          - **☀️🌙 Ícones Vetoriais Modernos:** Botão de alternância dinâmica entre modo Claro e Escuro com traçado vetorial suave em substituição a emojis.
+          - **🔍 Validação e Diagnóstico de Integridade:** Classificação padronizada (`DOCUMENTO IMPORTÁVEL`, `DOCUMENTO IMPORTÁVEL, PORÉM PODE CONTER FALHAS`, `DOCUMENTO NÃO IMPORTÁVEL`), detecção inteligente de imagens escaneadas sem camada de texto e auditoria de curvas vetoriais.
+          - **📝 Bloco de Notas Integrado:** Extração limpa em texto cru e layout preservado com busca rápida (`Ctrl+F`).
+          - **🔄 Compatibilidade Retroativa:** Instalações anteriores do FT PDF Lite atualizam automaticamente de forma transparente.
           
-          Baixe o arquivo executável único abaixo (`FtPdfLite.exe`) e execute diretamente com 2 cliques!
+          Baixe o arquivo executável único abaixo (`CCPDF.exe`) e execute diretamente com 2 cliques!
         files: |
-          ./publish-ft-pdf-lite/FtPdfLite.exe
+          ./publish-ccpdf/CCPDF.exe
+          ./publish-ccpdf/FtPdfLite.exe
+          ./CCPDF-Windows-x64.zip
           ./FT-PDF-Lite-Windows-x64.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
